@@ -7,6 +7,7 @@ import pytest
 
 import app.services.accounts as accounts_service
 from app.db import Database
+from app.llm import LLMError, build_analysis_from_payload
 from app.mail.imap import SearchResult
 from app.mail.mime import make_message_key, parse_raw_email
 from app.security import SecretBox
@@ -147,6 +148,120 @@ def test_rescan_reprocesses_previously_skipped_messages(sync_setup):
     assert farhill is not None
     assert farhill["kind"] == "interview"
     assert farhill["exam_start"] == "2026-10-23T14:00+08:00"
+
+
+def test_llm_is_primary_when_configured(sync_setup):
+    db, vault, account, _, _ = sync_setup
+    raw = (FIXTURES / "interview_invite.eml").read_bytes()
+    payload = {
+        "is_event": True,
+        "kind": "interview",
+        "confidence": 0.91,
+        "company": "远山资本",
+        "role": "投资分析师",
+        "interview_round": "一面",
+        "start": "2026-10-24T10:00:00+08:00",
+        "time_known": True,
+        "platform": "腾讯会议",
+        "url": "https://meeting.tencent.com/llm-demo",
+        "mode": "online",
+        "notes": ["提前进入会议室"],
+    }
+
+    class FakeLLM:
+        max_calls = 10
+
+        def should_consider(self, parsed, analysis):
+            return True
+
+        def analyze(self, parsed):
+            return build_analysis_from_payload(payload)
+
+    service = SyncService(
+        db,
+        vault,
+        logging.getLogger("campus-radar-test-llm-primary"),
+        session_factory=lambda account: FakeSession({1: raw}),
+        llm_factory=lambda: FakeLLM(),
+    )
+    result = service.sync_account(account["id"])
+    assert result.success
+    assert result.counts["llm_called"] == 1
+    assert result.counts["llm_matched"] == 1
+    assert result.counts["created_interviews"] == 1
+    event = db.fetch_one("SELECT * FROM events WHERE company = '远山资本'")
+    assert event is not None
+    assert event["kind"] == "interview"
+    assert event["interview_round"] == "一面"
+    assert event["exam_start"] == "2026-10-24T10:00+08:00"
+    assert event["platform"] == "腾讯会议"
+    assert event["needs_review"] == 1
+    assert "大模型兜底识别" in (event["auto_notes"] or "")
+
+
+def test_llm_error_falls_back_to_local_rules(sync_setup):
+    db, vault, account, _, _ = sync_setup
+    raw = (FIXTURES / "interview_invite.eml").read_bytes()
+
+    class BrokenLLM:
+        max_calls = 10
+
+        def should_consider(self, parsed, analysis):
+            return True
+
+        def analyze(self, parsed):
+            raise LLMError("temporary failure")
+
+    service = SyncService(
+        db,
+        vault,
+        logging.getLogger("campus-radar-test-llm-error"),
+        session_factory=lambda account: FakeSession({1: raw}),
+        llm_factory=lambda: BrokenLLM(),
+    )
+    result = service.sync_account(account["id"])
+    assert result.success
+    assert result.counts["llm_called"] == 1
+    assert result.counts["llm_errors"] == 1
+    assert result.counts["llm_matched"] == 0
+    assert result.counts["created"] == 1
+    event = db.fetch_one("SELECT * FROM events WHERE company = '远山资本'")
+    assert event is not None
+    assert event["exam_start"] == "2026-10-23T14:00+08:00"
+
+
+def test_llm_rejection_is_not_reprocessed_on_next_sync(sync_setup):
+    db, vault, account, _, _ = sync_setup
+    raw = (FIXTURES / "marketing_questions.eml").read_bytes()
+
+    class RejectingLLM:
+        max_calls = 10
+
+        def should_consider(self, parsed, analysis):
+            return True
+
+        def analyze(self, parsed):
+            return None
+
+    service = SyncService(
+        db,
+        vault,
+        logging.getLogger("campus-radar-test-llm-reject"),
+        session_factory=lambda account: FakeSession({1: raw}),
+        llm_factory=lambda: RejectingLLM(),
+    )
+    first = service.sync_account(account["id"])
+    assert first.success
+    assert first.counts["llm_called"] == 1
+    assert first.counts["llm_rejected"] == 1
+    assert first.counts["created"] == 0
+    outcome = db.fetch_one("SELECT outcome FROM seen_messages")
+    assert outcome is not None and outcome["outcome"] == "llm_rejected"
+
+    second = service.sync_account(account["id"])
+    assert second.success
+    assert second.counts["llm_called"] == 0
+    assert second.counts["scanned"] == 0
 
 
 def test_sync_marks_error_when_credentials_cannot_decrypt(tmp_path, monkeypatch):

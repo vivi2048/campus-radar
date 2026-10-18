@@ -12,9 +12,17 @@ from fastapi.staticfiles import StaticFiles
 
 from .config import APP_VERSION, Settings, env_value, load_settings, migrate_legacy_database
 from .db import Database
+from .llm import (
+    LLMConfigError,
+    LLMError,
+    build_llm_fallback,
+    get_llm_settings_view,
+    save_llm_settings,
+    test_llm_connection,
+)
 from .mail.imap import MailboxError
 from .mail.providers import list_providers
-from .schemas import AccountCreate, AccountUpdate, EventPayload, EventUpdate
+from .schemas import AISettingsUpdate, AccountCreate, AccountUpdate, EventPayload, EventUpdate
 from .security import SecretBox
 from .services.accounts import (
     AccountError,
@@ -73,7 +81,12 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     db = Database(settings.db_path)
     db.init()
     vault = SecretBox(settings.secret_key_path, env_key=env_value("SECRET_KEY"))
-    sync_service = SyncService(db, vault, logger)
+    sync_service = SyncService(
+        db,
+        vault,
+        logger,
+        llm_factory=lambda: build_llm_fallback(db, vault, logger),
+    )
     sync_manager = SyncManager(db, sync_service, logger)
 
     @asynccontextmanager
@@ -177,6 +190,25 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     @app.get("/api/providers")
     async def providers() -> list[dict[str, Any]]:
         return list_providers()
+
+    @app.get("/api/ai-settings")
+    def ai_settings_get() -> dict[str, Any]:
+        return get_llm_settings_view(db)
+
+    @app.put("/api/ai-settings")
+    def ai_settings_update(payload: AISettingsUpdate) -> dict[str, Any]:
+        try:
+            return save_llm_settings(db, vault, payload.model_dump())
+        except LLMConfigError as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+    @app.post("/api/ai-settings/test")
+    def ai_settings_test() -> dict[str, Any]:
+        try:
+            message = test_llm_connection(db, vault)
+        except LLMError as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
+        return {"message": message}
 
     @app.get("/api/accounts")
     async def accounts_list() -> list[dict[str, Any]]:

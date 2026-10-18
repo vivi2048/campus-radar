@@ -189,6 +189,53 @@ def test_account_crud_without_network(client, monkeypatch, settings):
     assert client.get("/api/accounts").json() == []
 
 
+def test_ai_settings_api_encrypts_key_and_clear(client):
+    default = client.get("/api/ai-settings")
+    assert default.status_code == 200
+    assert default.json()["active"] is False
+    assert default.json()["has_api_key"] is False
+
+    response = client.put(
+        "/api/ai-settings",
+        json={
+            "base_url": "https://api.example.com/v1",
+            "model": "demo-model",
+            "api_key": "sk-test-secret",
+            "max_calls_per_sync": 6,
+        },
+    )
+    assert response.status_code == 200
+    data = response.json()
+    assert data["active"] is True
+    assert data["has_api_key"] is True
+    assert "api_key" not in data
+    stored = client.app.state.db.fetch_one(
+        "SELECT value FROM app_settings WHERE key = 'llm_api_key_enc'"
+    )
+    assert stored and stored["value"] != "sk-test-secret"
+
+    invalid = client.put(
+        "/api/ai-settings",
+        json={"base_url": "", "model": "", "api_key": "sk-another"},
+    )
+    assert invalid.status_code == 400
+
+    cleared = client.put(
+        "/api/ai-settings",
+        json={
+            "base_url": "https://api.example.com/v1",
+            "model": "demo-model",
+            "clear_api_key": True,
+        },
+    )
+    assert cleared.status_code == 200
+    assert cleared.json()["active"] is False
+    assert cleared.json()["has_api_key"] is False
+
+    unavailable = client.post("/api/ai-settings/test")
+    assert unavailable.status_code == 400
+
+
 def test_mutations_require_ui_header(client):
     client.headers.pop("X-Campus-Radar-Request", None)
     response = client.post("/api/demo")

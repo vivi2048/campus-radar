@@ -55,6 +55,16 @@ class EventUpdate(BaseModel):
         return self.model_dump(exclude_unset=True)
 
 
+class AISettingsUpdate(BaseModel):
+    model_config = ConfigDict(extra="ignore")
+
+    base_url: str = ""
+    model: str = ""
+    api_key: str | None = None
+    clear_api_key: bool = False
+    max_calls_per_sync: int = 10
+
+
 class AccountCreate(BaseModel):
     model_config = ConfigDict(extra="ignore")
 

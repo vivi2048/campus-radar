@@ -9,6 +9,7 @@ from datetime import datetime, timedelta, timezone
 from typing import Any, Callable
 
 from ..db import Database
+from ..llm import LLMError
 from ..mail.imap import MailboxError, MailboxSession, MailAccount
 from ..mail.mime import make_message_key, parse_raw_email
 from ..extract.pipeline import analyze_email
@@ -19,7 +20,7 @@ from .events import find_duplicate_event, merge_into_event
 
 MAX_EMAIL_BYTES = 10 * 1024 * 1024
 RESCHEDULE_RE = re.compile(r"变更|调整|改期|更新|延期|更改", re.IGNORECASE)
-RESCANNABLE_OUTCOMES = {"not_exam", "not_event", "error"}
+RESCANNABLE_OUTCOMES = {"not_exam", "not_event", "error", "llm_error"}
 
 SessionFactory = Callable[[MailAccount], MailboxSession]
 
@@ -39,11 +40,13 @@ class SyncService:
         logger: logging.Logger,
         *,
         session_factory: SessionFactory = MailboxSession,
+        llm_factory: Callable[[], Any] | None = None,
     ) -> None:
         self.db = db
         self.vault = vault
         self.logger = logger
         self.session_factory = session_factory
+        self.llm_factory = llm_factory
 
     def _set_failed(self, account_id: int, message: str) -> SyncResult:
         self.db.execute(
@@ -69,6 +72,10 @@ class SyncService:
             "created_exams": 0,
             "created_interviews": 0,
             "reclassified": 0,
+            "llm_called": 0,
+            "llm_matched": 0,
+            "llm_rejected": 0,
+            "llm_errors": 0,
             "merged": 0,
             "skipped": 0,
             "errors": 0,
@@ -94,6 +101,15 @@ class SyncService:
         mail_account = build_mail_account(row, password)
         next_uid = int(row.get("last_uid") or 0)
         uidvalidity: str | None = row.get("uidvalidity")
+        llm = None
+        if self.llm_factory:
+            try:
+                llm = self.llm_factory()
+            except Exception as exc:
+                self.logger.warning(
+                    "LLM recognition is unavailable for account %s: %s", account_id, exc
+                )
+        llm_calls = 0
         try:
             with self.session_factory(mail_account) as session:
                 search = session.search(
@@ -130,9 +146,48 @@ class SyncService:
                             continue
                         counts["scanned"] += 1
                         analysis = analyze_email(parsed)
+                        llm_attempted = False
+                        llm_error = False
+                        if llm is not None:
+                            try:
+                                should_consider = llm.should_consider(parsed, analysis)
+                            except Exception:
+                                should_consider = False
+                            max_calls = int(getattr(llm, "max_calls", 0) or 0)
+                            if should_consider and llm_calls < max_calls:
+                                llm_attempted = True
+                                llm_calls += 1
+                                counts["llm_called"] += 1
+                                try:
+                                    llm_analysis = llm.analyze(parsed)
+                                except LLMError as exc:
+                                    counts["llm_errors"] += 1
+                                    llm_error = True
+                                    llm_analysis = None
+                                    self.logger.warning(
+                                        "LLM recognition failed for account %s: %s",
+                                        account_id,
+                                        exc,
+                                    )
+                                if (
+                                    llm_analysis
+                                    and llm_analysis.accepted
+                                    and llm_analysis.fields
+                                    and llm_analysis.timing
+                                ):
+                                    analysis = llm_analysis
+                                    counts["llm_matched"] += 1
+                                elif not llm_error:
+                                    counts["llm_rejected"] += 1
                         if not analysis.accepted or not analysis.fields or not analysis.timing:
                             counts["skipped"] += 1
-                            self._record_seen(account_id, message_key, "not_event", None)
+                            if llm_error:
+                                outcome = "llm_error"
+                            elif llm_attempted:
+                                outcome = "llm_rejected"
+                            else:
+                                outcome = "not_event"
+                            self._record_seen(account_id, message_key, outcome, None)
                             continue
                         counts["matched"] += 1
                         new_values = self._event_values(account_id, parsed, analysis)
@@ -207,7 +262,8 @@ class SyncService:
         )
         self.logger.info(
             "Sync account %s complete: scanned=%s matched=%s created=%s"
-            " (exam=%s interview=%s) merged=%s reclassified=%s errors=%s",
+            " (exam=%s interview=%s) merged=%s reclassified=%s"
+            " llm_called=%s llm_matched=%s llm_errors=%s errors=%s",
             account_id,
             counts["scanned"],
             counts["matched"],
@@ -216,6 +272,9 @@ class SyncService:
             counts["created_interviews"],
             counts["merged"],
             counts["reclassified"],
+            counts["llm_called"],
+            counts["llm_matched"],
+            counts["llm_errors"],
             counts["errors"],
         )
         return SyncResult(success=True, counts=counts)

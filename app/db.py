@@ -80,6 +80,12 @@ CREATE TABLE IF NOT EXISTS seen_messages (
     seen_at TEXT NOT NULL,
     PRIMARY KEY (account_id, message_key)
 );
+
+CREATE TABLE IF NOT EXISTS app_settings (
+    key TEXT PRIMARY KEY,
+    value TEXT NOT NULL,
+    updated_at TEXT NOT NULL
+);
 """
 
 

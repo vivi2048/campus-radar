@@ -5,7 +5,7 @@ const VALID_VIEWS = new Set(["dashboard", "library", "accounts"]);
 const VIEW_TITLES = {
   dashboard: "总览",
   library: "日程",
-  accounts: "邮箱设置",
+  accounts: "邮箱",
 };
 const WEEKDAYS = ["周日", "周一", "周二", "周三", "周四", "周五", "周六"];
 const WEEKDAYS_NARROW = ["日", "一", "二", "三", "四", "五", "六"];
@@ -82,6 +82,14 @@ const state = {
   syncNotice: false,
   syncFailures: 0,
   accountFormBusy: false,
+  aiSettings: {
+    active: false,
+    has_api_key: false,
+    base_url: "",
+    model: "",
+    max_calls_per_sync: 10,
+  },
+  aiBusy: false,
   booted: false,
   quickBusy: new Set(),
 };
@@ -486,11 +494,18 @@ function syncCountsSummary(account) {
   const created = Number(counts.created || 0);
   const merged = Number(counts.merged || 0);
   const reclassified = Number(counts.reclassified || 0);
-  if (!scanned && !created && !merged && !reclassified) return "没有发现新的笔试或面试邮件";
+  const llmCalled = Number(counts.llm_called || 0);
+  const llmMatched = Number(counts.llm_matched || 0);
+  const llmErrors = Number(counts.llm_errors || 0);
+  if (!scanned && !created && !merged && !reclassified && !llmCalled) {
+    return "没有发现新的笔试或面试邮件";
+  }
   const parts = [`检查 ${scanned} 封`];
   if (created) parts.push(createdBreakdown(counts) || `新增 ${created} 场`);
   if (reclassified) parts.push(`重新识别 ${reclassified} 条`);
   if (merged) parts.push(`合并 ${merged} 条提醒`);
+  if (llmCalled) parts.push(`AI 识别 ${llmMatched}/${llmCalled} 条`);
+  if (llmErrors) parts.push(`AI 调用失败 ${llmErrors} 次`);
   if (counts.errors) parts.push(`${counts.errors} 封读取失败`);
   return parts.join(" · ");
 }
@@ -566,27 +581,31 @@ async function api(path, options = {}) {
 }
 
 async function loadAllData() {
-  const [events, accounts, providers, meta] = await Promise.all([
+  const [events, accounts, providers, meta, aiSettings] = await Promise.all([
     api("/api/events"),
     api("/api/accounts"),
     api("/api/providers"),
     api("/api/meta"),
+    api("/api/ai-settings"),
   ]);
   state.events = Array.isArray(events) ? events : [];
   state.accounts = Array.isArray(accounts) ? accounts : [];
   state.providers = Array.isArray(providers) ? providers : [];
   state.meta = meta || state.meta;
+  state.aiSettings = aiSettings || state.aiSettings;
 }
 
 async function refreshData({ render = true } = {}) {
-  const [events, accounts, meta] = await Promise.all([
+  const [events, accounts, meta, aiSettings] = await Promise.all([
     api("/api/events"),
     api("/api/accounts"),
     api("/api/meta"),
+    api("/api/ai-settings"),
   ]);
   state.events = events;
   state.accounts = accounts;
   state.meta = meta;
+  state.aiSettings = aiSettings || state.aiSettings;
   updateSidebar();
   if (render) renderCurrentView();
 }
@@ -1396,7 +1415,55 @@ function renderAccounts() {
         </section>
       </div>
     </div>
+    ${renderAISettingsPanel()}
   </div>`;
+}
+
+function renderAISettingsPanel() {
+  const ai = state.aiSettings || {};
+  const active = Boolean(ai.active);
+  const hasKey = Boolean(ai.has_api_key);
+  return `<section class="panel ai-settings-panel" id="ai-settings-panel">
+    <div class="ai-settings-head">
+      <div>
+        <div class="eyebrow">AI RECOGNITION · OPTIONAL</div>
+        <h2>大模型识别</h2>
+        <p>填写 API Key 后，招聘相关邮件会优先交给大模型识别；未填写时完全使用本地规则。AI 生成的记录会进入待确认。</p>
+      </div>
+      <span class="status-chip ${active ? "is-live" : "is-ignored"}">${active ? "大模型优先" : "本地规则"}</span>
+    </div>
+    <form id="ai-settings-form">
+      <div class="form-grid is-3">
+        <div class="form-field is-full">
+          <label class="field-label" for="ai-base-url">接口地址</label>
+          <input class="input" id="ai-base-url" name="base_url" type="url" value="${escapeHtml(ai.base_url || "")}" placeholder="https://api.deepseek.com/v1">
+          <p class="field-help">OpenAI 兼容的 Chat Completions 地址。DeepSeek 填 https://api.deepseek.com/v1（不要带 /anthropic）；本地 Ollama 可填 http://127.0.0.1:11434/v1，并填写一个占位 Key。</p>
+        </div>
+        <div class="form-field">
+          <label class="field-label" for="ai-model">模型名称</label>
+          <input class="input" id="ai-model" name="model" type="text" value="${escapeHtml(ai.model || "")}" placeholder="deepseek-chat" maxlength="200">
+        </div>
+        <div class="form-field">
+          <label class="field-label" for="ai-max-calls">每次同步最多调用</label>
+          <input class="input" id="ai-max-calls" name="max_calls_per_sync" type="number" min="1" max="50" value="${Number(ai.max_calls_per_sync || 10)}">
+        </div>
+        <div class="form-field">
+          <label class="field-label" for="ai-api-key">API Key</label>
+          <div class="password-wrap">
+            <input class="input" id="ai-api-key" name="api_key" type="password" placeholder="${hasKey ? "已保存，留空不修改" : "sk-..."}" autocomplete="new-password">
+            <button class="password-toggle" type="button" data-action="toggle-password" data-target="ai-api-key" aria-label="显示或隐藏 API Key">${icon("eye", 15)}</button>
+          </div>
+        </div>
+      </div>
+      <p class="ai-privacy-note">${icon("shield", 14)}填写 Key 后，通过招聘关键词初筛的邮件会把主题、正文和链接发送到你配置的接口；邮箱授权码不会发送。关闭方式：清除 API Key。</p>
+      <div class="form-error" data-form-error hidden></div>
+      <div class="ai-settings-actions">
+        <button class="button button-primary button-small" type="submit">保存设置</button>
+        <button class="button button-ghost button-small" type="button" data-action="test-ai" title="先保存设置，再用已保存的配置测试连接">${icon("sparkle", 14)}测试连接</button>
+        ${hasKey ? `<button class="text-button is-danger" type="button" data-action="clear-ai-key">清除 API Key</button>` : ""}
+      </div>
+    </form>
+  </section>`;
 }
 
 function renderAccountCard(account) {
@@ -1783,6 +1850,7 @@ function renderDrawer() {
   const badges = [
     kindBadge(event),
     `<span class="status-chip ${status.className}">${escapeHtml(status.label)}</span>`,
+    (event.auto_notes || "").includes("大模型") ? `<span class="tag is-ai">AI 识别</span>` : "",
     event.interview_round ? `<span class="tag">${escapeHtml(event.interview_round)}</span>` : "",
     event.platform ? `<span class="tag is-platform">${icon("monitor", 12)}${escapeHtml(event.platform)}</span>` : "",
     modeLabel(event.mode) ? `<span class="tag">${escapeHtml(modeLabel(event.mode))}</span>` : "",
@@ -2109,12 +2177,17 @@ async function pollSync() {
         const merged = accounts.reduce((sum, account) => sum + Number(account.last_sync_counts?.merged || 0), 0);
         const reclassified = accounts.reduce((sum, account) => sum + Number(account.last_sync_counts?.reclassified || 0), 0);
         const scanned = accounts.reduce((sum, account) => sum + Number(account.last_sync_counts?.scanned || 0), 0);
+        const llmCalled = accounts.reduce((sum, account) => sum + Number(account.last_sync_counts?.llm_called || 0), 0);
+        const llmMatched = accounts.reduce((sum, account) => sum + Number(account.last_sync_counts?.llm_matched || 0), 0);
+        const llmErrors = accounts.reduce((sum, account) => sum + Number(account.last_sync_counts?.llm_errors || 0), 0);
         const parts = [];
         if (created) {
           parts.push(createdBreakdown({ created, created_exams: createdExams, created_interviews: createdInterviews }) || `新增 ${created} 场`);
         }
         if (reclassified) parts.push(`重新识别 ${reclassified} 条`);
         if (merged) parts.push(`合并 ${merged} 条提醒`);
+        if (llmCalled) parts.push(`AI 识别 ${llmMatched}/${llmCalled} 条`);
+        if (llmErrors) parts.push(`AI 调用失败 ${llmErrors} 次`);
         if (parts.length) {
           showToast(`同步完成，${parts.join("，")}`, "success");
         } else if (scanned) {
@@ -2359,6 +2432,98 @@ async function submitEventForm(form) {
 // ---------------------------------------------------------------------------
 // Account actions
 // ---------------------------------------------------------------------------
+
+async function submitAISettingsForm(form) {
+  if (state.aiBusy) return;
+  setFormError(form, "");
+  const data = new FormData(form);
+  const baseUrl = String(data.get("base_url") || "").trim();
+  const model = String(data.get("model") || "").trim();
+  const apiKey = String(data.get("api_key") || "").trim();
+  const maxCalls = Number(data.get("max_calls_per_sync") || 10);
+
+  if (baseUrl && !/^https?:\/\//i.test(baseUrl)) {
+    setFormError(form, "接口地址需要以 http:// 或 https:// 开头。");
+    form.querySelector("#ai-base-url")?.focus();
+    return;
+  }
+  if (apiKey && (!baseUrl || !model)) {
+    setFormError(form, "填写 API Key 时，请同时填写接口地址和模型名称。");
+    (baseUrl ? form.querySelector("#ai-model") : form.querySelector("#ai-base-url"))?.focus();
+    return;
+  }
+  if (!Number.isInteger(maxCalls) || maxCalls < 1 || maxCalls > 50) {
+    setFormError(form, "每次同步调用次数需在 1 到 50 之间。");
+    form.querySelector("#ai-max-calls")?.focus();
+    return;
+  }
+
+  state.aiBusy = true;
+  const submit = form.querySelector("button[type='submit']");
+  setButtonBusy(submit, true, "保存中…");
+  try {
+    const saved = await api("/api/ai-settings", {
+      method: "PUT",
+      body: {
+        base_url: baseUrl,
+        model,
+        api_key: apiKey || null,
+        max_calls_per_sync: maxCalls,
+      },
+    });
+    state.aiSettings = saved;
+    state.aiBusy = false;
+    renderCurrentView();
+    showToast(saved.active ? "已启用大模型优先识别" : "已保存，当前使用本地规则", "success");
+  } catch (error) {
+    state.aiBusy = false;
+    setFormError(form, error.message);
+    setButtonBusy(submit, false);
+  }
+}
+
+async function testAISettings() {
+  if (state.aiBusy) return;
+  state.aiBusy = true;
+  const button = document.querySelector("[data-action='test-ai']");
+  setButtonBusy(button, true, "测试中…");
+  try {
+    const result = await api("/api/ai-settings/test", { method: "POST" });
+    showToast(result.message || "连接成功", "success");
+  } catch (error) {
+    showToast(error.message, "error");
+  } finally {
+    state.aiBusy = false;
+    if (button && document.contains(button)) setButtonBusy(button, false);
+  }
+}
+
+async function clearAIKeyWithConfirm() {
+  const confirmed = await showConfirm({
+    title: "清除 API Key？",
+    message: "清除后将恢复为完全本地规则识别，不再向大模型接口发送邮件内容。",
+    confirmLabel: "清除并停用",
+    danger: true,
+    iconName: "key",
+  });
+  if (!confirmed) return;
+  try {
+    const saved = await api("/api/ai-settings", {
+      method: "PUT",
+      body: {
+        base_url: state.aiSettings?.base_url || "",
+        model: state.aiSettings?.model || "",
+        max_calls_per_sync: state.aiSettings?.max_calls_per_sync || 10,
+        clear_api_key: true,
+      },
+    });
+    state.aiSettings = saved;
+    renderCurrentView();
+    showToast("API Key 已清除，当前使用本地规则", "info");
+  } catch (error) {
+    showToast(error.message, "error");
+  }
+}
 
 async function submitAccountForm(form) {
   if (state.accountFormBusy) return;
@@ -2610,6 +2775,12 @@ function handleDocumentClick(event) {
     case "rescan-account":
       if (id) triggerAccountRescan(Number(id));
       break;
+    case "test-ai":
+      testAISettings();
+      break;
+    case "clear-ai-key":
+      clearAIKeyWithConfirm();
+      break;
     case "open-event":
       if (id) openEventDrawer(Number(id));
       break;
@@ -2682,6 +2853,9 @@ function handleDocumentSubmit(event) {
   } else if (form.id === "account-form") {
     event.preventDefault();
     submitAccountForm(form);
+  } else if (form.id === "ai-settings-form") {
+    event.preventDefault();
+    submitAISettingsForm(form);
   } else if (form.matches("[data-reauth-form]")) {
     event.preventDefault();
     submitReauthForm(form);
@@ -2699,7 +2873,7 @@ function handleDocumentInput(event) {
     if (results) results.innerHTML = renderLibraryResults();
   }
   const form = target.closest("form");
-  if (form && (form.id === "account-form" || form.id === "event-form" || form.matches("[data-reauth-form]"))) {
+  if (form && (form.id === "account-form" || form.id === "event-form" || form.id === "ai-settings-form" || form.matches("[data-reauth-form]"))) {
     setFormError(form, "");
   }
 }
