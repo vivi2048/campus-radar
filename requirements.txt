@@ -1,0 +1,4 @@
+fastapi>=0.115
+uvicorn[standard]>=0.30
+cryptography>=43
+tzdata>=2024.1

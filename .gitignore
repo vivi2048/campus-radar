@@ -1,0 +1,11 @@
+.venv/
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.env
+data/
+.demo-data/
+.demo-server.log
+*.log
+.venv/.exam-radar-ready
+.ruff_cache/
