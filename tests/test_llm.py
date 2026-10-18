@@ -90,6 +90,17 @@ def test_parse_llm_response_handles_code_fence_and_rejects_noise():
         parse_llm_response("not json")
 
 
+def test_llm_candidate_filter_allows_unsubscribe_in_exam_invite():
+    parsed = _parsed(
+        "来自麦当劳的考试邀请",
+        "考试时间：2026-10-19 19:00-23:59，考试时长 60 分钟，点击这里取消订阅 unsubscribe。",
+    )
+    assert LLMFallback.should_consider(
+        parsed,
+        _rejected("有效信号不足，可能是流程通知或资讯邮件"),
+    )
+
+
 def test_llm_candidate_filter_skips_promotions():
     accepted = _parsed("面试邀请 - 后端工程师", "现邀请你参加视频面试，面试时间：10月25日 14:00。")
     assert LLMFallback.should_consider(accepted, _rejected("有效信号不足"))
@@ -113,13 +124,13 @@ def test_llm_settings_encrypt_key_and_clear(tmp_path):
             "base_url": "https://api.example.com/v1",
             "model": "demo-model",
             "api_key": "sk-test-secret",
-            "max_calls_per_sync": 8,
+            "max_calls_per_sync": 150,
         },
     )
     assert view["active"] is True
     assert view["has_api_key"] is True
     assert "api_key" not in view
-    assert view["max_calls_per_sync"] == 8
+    assert view["max_calls_per_sync"] == 150
     stored = db.fetch_one("SELECT value FROM app_settings WHERE key = 'llm_api_key_enc'")
     assert stored and stored["value"] != "sk-test-secret"
 

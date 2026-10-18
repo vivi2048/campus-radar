@@ -4,7 +4,7 @@ import json
 import logging
 import re
 import threading
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from datetime import datetime, timedelta, timezone
 from typing import Any, Callable
 
@@ -175,7 +175,9 @@ class SyncService:
                                     and llm_analysis.fields
                                     and llm_analysis.timing
                                 ):
-                                    analysis = llm_analysis
+                                    analysis = self._merge_llm_analysis(
+                                        llm_analysis, analysis
+                                    )
                                     counts["llm_matched"] += 1
                                 elif not llm_error:
                                     counts["llm_rejected"] += 1
@@ -298,6 +300,76 @@ class SyncService:
                 seen_at = excluded.seen_at
             """,
             (account_id, message_key, outcome, event_id, utc_now_iso()),
+        )
+
+    @staticmethod
+    def _merge_llm_analysis(primary: Any, fallback: Any) -> Any:
+        """Keep LLM fields, but fill gaps from the local rules when possible."""
+        if (
+            not primary
+            or not fallback
+            or not primary.accepted
+            or not fallback.accepted
+            or primary.kind != fallback.kind
+            or not primary.fields
+            or not fallback.fields
+            or not primary.timing
+            or not fallback.timing
+        ):
+            return primary
+        fields = replace(
+            primary.fields,
+            company=primary.fields.company or fallback.fields.company,
+            role=primary.fields.role or fallback.fields.role,
+            platform=primary.fields.platform or fallback.fields.platform,
+            exam_url=primary.fields.exam_url or fallback.fields.exam_url,
+            mode=(
+                primary.fields.mode
+                if primary.fields.mode != "unknown"
+                else fallback.fields.mode
+            ),
+            location=primary.fields.location or fallback.fields.location,
+            access_code=primary.fields.access_code or fallback.fields.access_code,
+            interview_round=(
+                primary.fields.interview_round or fallback.fields.interview_round
+            ),
+        )
+        timing = primary.timing
+        start = timing.exam_start
+        end = timing.exam_end
+        time_known = timing.exam_time_known
+        deadline = timing.deadline
+        deadline_known = timing.deadline_time_known
+        duration = timing.duration_minutes
+        notes = [primary.auto_notes] if primary.auto_notes else []
+        if (not start or not time_known) and fallback.timing.exam_start:
+            start = fallback.timing.exam_start
+            end = fallback.timing.exam_end
+            time_known = fallback.timing.exam_time_known
+            if fallback.timing.start_note:
+                notes.append(fallback.timing.start_note)
+        if not deadline and fallback.timing.deadline:
+            deadline = fallback.timing.deadline
+            deadline_known = fallback.timing.deadline_time_known
+            if fallback.timing.deadline_note:
+                notes.append(fallback.timing.deadline_note)
+        if not duration and fallback.timing.duration_minutes:
+            duration = fallback.timing.duration_minutes
+        auto_notes = "\n".join(dict.fromkeys(part for part in notes if part))
+        timing = replace(
+            timing,
+            exam_start=start,
+            exam_end=end,
+            exam_time_known=time_known,
+            deadline=deadline,
+            deadline_time_known=deadline_known,
+            duration_minutes=duration,
+        )
+        return replace(
+            primary,
+            fields=fields,
+            timing=timing,
+            auto_notes=auto_notes or primary.auto_notes,
         )
 
     @staticmethod

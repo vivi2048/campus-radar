@@ -8,7 +8,7 @@ import pytest
 from app.extract.dates import extract_timings, normalize_timing_text
 from app.extract.classify import classify_email
 from app.extract.pipeline import analyze_email
-from app.mail.mime import parse_raw_email
+from app.mail.mime import EmailLink, parse_raw_email
 
 FIXTURES = Path(__file__).parent / "fixtures"
 RECEIVED = datetime(2026, 10, 18, 2, 0, tzinfo=timezone.utc)
@@ -155,9 +155,12 @@ def test_exam_window_start_and_deadline():
 
 def test_relative_deadline_from_received_time():
     timing = extract_timings("请在收到本邮件后 48 小时内完成在线测评", RECEIVED)
-    assert timing.exam_start is None
+    assert timing.exam_start == "2026-10-18T14:00+08:00"
+    assert timing.exam_time_known is True
+    assert timing.start_estimated is True
     assert timing.deadline == "2026-10-20T10:00+08:00"
     assert timing.deadline_note
+    assert "自动安排" in (timing.start_note or "")
 
 
 def test_chinese_time_immediately_after_colon():
@@ -172,8 +175,82 @@ def test_deadline_without_exam_time():
         "请于 2026年10月23日 23:59 前完成本次在线测评",
         RECEIVED,
     )
-    assert timing.exam_start is None
+    assert timing.exam_start == "2026-10-18T14:00+08:00"
+    assert timing.exam_time_known is True
+    assert timing.start_estimated is True
     assert timing.deadline == "2026-10-23T23:59+08:00"
+
+
+def test_urgent_completion_without_deadline_gets_estimated_slot():
+    timing = extract_timings("请尽快完成在线笔试，考试时长 60 分钟", RECEIVED)
+    assert timing.exam_start == "2026-10-18T14:00+08:00"
+    assert timing.exam_end == "2026-10-18T15:00+08:00"
+    assert timing.start_estimated is True
+    assert timing.deadline is None
+
+
+def test_confirmation_deadline_does_not_create_fake_interview_time():
+    timing = extract_timings(
+        "面试时间待定，请于2026年10月20日前回复确认是否参加",
+        RECEIVED,
+        kind="interview",
+    )
+    assert timing.exam_start is None
+    assert timing.deadline == "2026-10-20T23:59+08:00"
+    assert timing.start_estimated is False
+
+
+def test_exam_invitation_with_result_words_and_unsubscribe_is_accepted():
+    subject = "来自麦当劳的考试邀请"
+    body = (
+        "感谢您投递麦当劳中国IT 2027届校园招聘软件开发工程师岗位，您已进入测评环节。"
+        "笔试成绩将成为是否进入后续面试流程的重要参考。\n"
+        "笔试信息\n"
+        "考试时间：2026-10-19 19:00-23:59\n"
+        "考试时长：60分钟\n"
+        "考试链接：https://www.nowcoder.com/test/start/mcd-demo\n"
+        "点击这里取消订阅 click to unsubscribe"
+    )
+    result = classify_email(
+        subject,
+        body,
+        [EmailLink("https://www.nowcoder.com/test/start/mcd-demo", "考试链接")],
+        sender_email="mcdchina-no-reply@example.com",
+        sender_name="麦当劳招聘",
+    )
+    assert result.accepted is True
+    assert result.kind == "exam"
+
+
+def test_info_session_thank_you_and_offer_are_rejected():
+    samples = [
+        (
+            "【10月12日 19:00】赛美特集团2027届第二批次校招空宣，岗位薪资福利揭秘",
+            "赛美特集团校园招聘空中宣讲会，将于今晚 7 点开始。",
+        ),
+        (
+            "【帆软招聘】帆软校园招聘简历投递成功通知",
+            "感谢您投递帆软校园招聘，我们已经收到您的简历。",
+        ),
+        (
+            "感谢您投递本公司职位",
+            "感谢您投递我公司的软件开发工程师职位，我们已经收到您的简历。",
+        ),
+        (
+            "孙华峰欢迎加入ThunderSoft",
+            "恭喜你通过面试，现向你发出正式 Offer，请在 10 月 14 日前接受。",
+        ),
+        (
+            "途虎养车 | 笔试意向调研",
+            "请填写问卷，反馈你希望参加笔试的时间段。",
+        ),
+        (
+            "【新凯来招聘-在线笔试场次预约邀请】请您反馈可以参加的笔试场次",
+            "请于截止时间前反馈可以参加的笔试场次。",
+        ),
+    ]
+    for subject, body in samples:
+        assert classify_email(subject, body, []).accepted is False
 
 
 def test_interview_time_and_confirmation_deadline():
@@ -206,6 +283,16 @@ def test_interview_relative_validity_window():
         kind="interview",
     )
     assert timing.deadline == "2026-10-21T10:00+08:00"
+
+
+def test_received_email_possessive_and_bare_day_windows():
+    first = extract_timings("请于收到邮件的48小时内完成在线测评", RECEIVED)
+    assert first.deadline == "2026-10-20T10:00+08:00"
+    assert first.exam_start == "2026-10-18T14:00+08:00"
+
+    second = extract_timings("请于2天内点击链接进行网络测评", RECEIVED)
+    assert second.deadline == "2026-10-20T10:00+08:00"
+    assert second.exam_start == "2026-10-18T14:00+08:00"
 
 
 def test_normalize_time_variants():

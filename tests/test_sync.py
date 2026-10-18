@@ -199,6 +199,46 @@ def test_llm_is_primary_when_configured(sync_setup):
     assert "大模型兜底识别" in (event["auto_notes"] or "")
 
 
+def test_llm_event_fills_missing_time_from_local_rules(sync_setup):
+    db, vault, account, _, _ = sync_setup
+    raw = (FIXTURES / "interview_invite.eml").read_bytes()
+    payload = {
+        "is_event": True,
+        "kind": "interview",
+        "confidence": 0.9,
+        "company": "远山资本",
+        "role": "投资分析师",
+        "start": None,
+        "time_known": False,
+        "notes": ["大模型没有给出具体时间"],
+    }
+
+    class NoTimeLLM:
+        max_calls = 10
+
+        def should_consider(self, parsed, analysis):
+            return True
+
+        def analyze(self, parsed):
+            return build_analysis_from_payload(payload)
+
+    service = SyncService(
+        db,
+        vault,
+        logging.getLogger("campus-radar-test-llm-merge"),
+        session_factory=lambda account: FakeSession({1: raw}),
+        llm_factory=lambda: NoTimeLLM(),
+    )
+    result = service.sync_account(account["id"])
+    assert result.success
+    assert result.counts["llm_matched"] == 1
+    event = db.fetch_one("SELECT * FROM events WHERE company = '远山资本'")
+    assert event is not None
+    assert event["exam_start"] == "2026-10-23T14:00+08:00"
+    assert event["exam_time_known"] == 1
+    assert "大模型兜底识别" in (event["auto_notes"] or "")
+
+
 def test_llm_error_falls_back_to_local_rules(sync_setup):
     db, vault, account, _, _ = sync_setup
     raw = (FIXTURES / "interview_invite.eml").read_bytes()

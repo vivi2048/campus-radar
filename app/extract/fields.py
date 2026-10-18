@@ -5,6 +5,7 @@ import unicodedata
 from dataclasses import dataclass
 
 from ..mail.mime import EmailLink
+from .company import canonicalize_company
 from .links import detect_platform, normalize_url, select_exam_link, select_interview_link
 
 GENERIC_COMPANY_RE = re.compile(
@@ -372,7 +373,7 @@ def extract_company(subject: str, body: str, sender_name: str, sender_email: str
     if not candidates:
         return ""
     candidates.sort(key=lambda item: item[0], reverse=True)
-    return candidates[0][1]
+    return canonicalize_company(candidates[0][1])
 
 
 def _trim_role(value: str) -> str:

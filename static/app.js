@@ -1445,7 +1445,7 @@ function renderAISettingsPanel() {
         </div>
         <div class="form-field">
           <label class="field-label" for="ai-max-calls">每次同步最多调用</label>
-          <input class="input" id="ai-max-calls" name="max_calls_per_sync" type="number" min="1" max="50" value="${Number(ai.max_calls_per_sync || 10)}">
+          <input class="input" id="ai-max-calls" name="max_calls_per_sync" type="number" min="1" max="300" value="${Number(ai.max_calls_per_sync || 10)}">
         </div>
         <div class="form-field">
           <label class="field-label" for="ai-api-key">API Key</label>
@@ -1851,6 +1851,7 @@ function renderDrawer() {
     kindBadge(event),
     `<span class="status-chip ${status.className}">${escapeHtml(status.label)}</span>`,
     (event.auto_notes || "").includes("大模型") ? `<span class="tag is-ai">AI 识别</span>` : "",
+    (event.auto_notes || "").includes("自动安排") ? `<span class="tag">时间估算</span>` : "",
     event.interview_round ? `<span class="tag">${escapeHtml(event.interview_round)}</span>` : "",
     event.platform ? `<span class="tag is-platform">${icon("monitor", 12)}${escapeHtml(event.platform)}</span>` : "",
     modeLabel(event.mode) ? `<span class="tag">${escapeHtml(modeLabel(event.mode))}</span>` : "",
@@ -2452,8 +2453,8 @@ async function submitAISettingsForm(form) {
     (baseUrl ? form.querySelector("#ai-model") : form.querySelector("#ai-base-url"))?.focus();
     return;
   }
-  if (!Number.isInteger(maxCalls) || maxCalls < 1 || maxCalls > 50) {
-    setFormError(form, "每次同步调用次数需在 1 到 50 之间。");
+  if (!Number.isInteger(maxCalls) || maxCalls < 1 || maxCalls > 300) {
+    setFormError(form, "每次同步调用次数需在 1 到 300 之间。");
     form.querySelector("#ai-max-calls")?.focus();
     return;
   }

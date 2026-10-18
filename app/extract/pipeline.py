@@ -53,11 +53,14 @@ def analyze_email(parsed: ParsedEmail) -> Analysis:
         notes_parts.append(fields.auto_notes)
     if timing.deadline_note:
         notes_parts.append(timing.deadline_note)
+    if timing.start_note:
+        notes_parts.append(timing.start_note)
     auto_notes = "\n".join(notes_parts) if notes_parts else None
 
     needs_review = bool(
         not timing.exam_start
         or not timing.exam_time_known
+        or timing.start_estimated
         or not fields.company
     )
     return Analysis(

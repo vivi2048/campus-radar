@@ -7,6 +7,7 @@ from typing import Any
 
 from ..config import LOCAL_TZ
 from ..db import Database
+from ..extract.company import canonicalize_company
 from ..extract.links import normalize_url
 from ..timeutil import local_iso, normalize_optional_iso, utc_now_iso
 
@@ -359,8 +360,8 @@ def set_event_status(db: Database, event_id: int, status: str) -> dict[str, Any]
 
 
 def _norm_company(value: str | None) -> str:
-    text = unicodedata.normalize("NFKC", value or "").casefold()
-    return re.sub(r"[\s·,，.。()（）有限公司股份集团]", "", text)
+    text = canonicalize_company(value or "").casefold()
+    return re.sub(r"[\s·,，.。()（）/|｜&]+", "", text)
 
 
 def _norm_role(value: str | None) -> str:

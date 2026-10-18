@@ -102,12 +102,12 @@ DURATION_PATTERNS: tuple[re.Pattern[str], ...] = (
 
 RELATIVE_DEADLINE_PATTERNS: tuple[re.Pattern[str], ...] = (
     re.compile(
-        r"(?:收到|收到本|收到此)?(?:封)?(?:邮件|通知)(?:之)?后\s*"
+        r"(?:收到|收到本|收到此)?(?:封)?(?:邮件|通知)(?:之|的)?后\s*"
         r"(?P<n>\d{1,3})\s*(?P<unit>分钟|小时|天)(?:之)?内",
         re.IGNORECASE,
     ),
     re.compile(
-        r"(?:收到|自收到)(?:本)?(?:封)?(?:邮件|通知)(?:之)?起\s*"
+        r"(?:收到|自收到)(?:本)?(?:封)?(?:邮件|通知)(?:之|的)?起\s*"
         r"(?P<n>\d{1,3})\s*(?P<unit>分钟|小时|天)(?:之)?内\s*(?:有效|完成|作答)?",
         re.IGNORECASE,
     ),
@@ -116,9 +116,27 @@ RELATIVE_DEADLINE_PATTERNS: tuple[re.Pattern[str], ...] = (
         re.IGNORECASE,
     ),
     re.compile(
+        r"(?<!\d)(?P<n>\d{1,3})\s*(?P<unit>分钟|小时|天)(?:之)?内\s*(?:完成|作答|提交)",
+        re.IGNORECASE,
+    ),
+    re.compile(
+        r"(?:于|在)?\s*(?P<n>\d{1,3})\s*(?P<unit>分钟|小时|天)(?:之)?内\s*"
+        r"(?:点击|登录|进入|进行|开始|参加)",
+        re.IGNORECASE,
+    ),
+    re.compile(
         r"within\s+(?P<n>\d{1,3})\s+(?P<unit>minutes?|hours?|days?)\s+(?:of\s+)?(?:receiving|this email|the email)",
         re.IGNORECASE,
     ),
+)
+
+COMPLETION_CUE_RE = re.compile(
+    r"尽快(?:完成|作答|开始|登录)|尽早(?:完成|作答)|及时(?:完成|作答)"
+    r"|(?:\d{1,3}\s*(?:分钟|小时|天)(?:之)?内)\s*(?:完成|作答|提交|点击|登录|进入|进行|开始|参加)"
+    r"|(?:截止|之前|前|有效期内).{0,12}(?:完成|作答|提交)"
+    r"|(?:完成|作答|提交).{0,8}(?:截止|截止时间)"
+    r"|有效期内(?:完成|作答)",
+    re.IGNORECASE,
 )
 
 EXAM_PREFIX_RULES: tuple[tuple[re.Pattern[str], float], ...] = (
@@ -217,6 +235,8 @@ class TimingExtraction:
     deadline_time_known: bool
     duration_minutes: int | None
     deadline_note: str | None = None
+    start_note: str | None = None
+    start_estimated: bool = False
 
 
 def normalize_timing_text(text: str) -> str:
@@ -444,7 +464,11 @@ def _context_scores(
         )
 
     polite_before = bool(re.search(r"请(?:于|在)?|务必(?:于)?|须于|需于", prefix))
-    before_marker = bool(re.search(r"(?:之)?前(?=\s*(?:完成|提交|确认|登录|进入|作答|关闭)|[，。；;\n])", suffix))
+    before_marker = bool(re.search(
+        r"(?:之)?前(?=\s*(?:完成|提交|确认|登录|进入|作答|关闭|回复|答复|反馈|选择|预约|接受)"
+        r"|[，。；;\n])",
+        suffix,
+    ))
     if polite_before and before_marker:
         deadline_score += 4
         candidate.reasons.append("带有请于……前完成的截止语义")
@@ -576,6 +600,26 @@ def extract_timings(
         elif chosen_exam.end_dt is None:
             exam_end = (chosen_exam.start_dt + timedelta(minutes=duration)).isoformat(timespec="minutes")
 
+    start_note: str | None = None
+    start_estimated = False
+    if not exam_start and COMPLETION_CUE_RE.search(prepared):
+        deadline_dt = datetime.fromisoformat(deadline) if deadline else None
+        inferred = _infer_estimated_start(local_received, deadline_dt, duration, kind)
+        if inferred:
+            exam_start = inferred.isoformat(timespec="minutes")
+            exam_time_known = True
+            start_estimated = True
+            if duration:
+                inferred_end = inferred + timedelta(minutes=duration)
+                if deadline_dt and inferred_end > deadline_dt:
+                    inferred_end = deadline_dt
+                exam_end = inferred_end.isoformat(timespec="minutes")
+            start_note = (
+                "邮件没有给出明确开始时间，已根据收件时间自动安排为 "
+                f"{inferred.month}月{inferred.day}日 {inferred.strftime('%H:%M')}，"
+                "请确认或手动修改。"
+            )
+
     return TimingExtraction(
         exam_start=exam_start,
         exam_end=exam_end,
@@ -584,7 +628,39 @@ def extract_timings(
         deadline_time_known=deadline_time_known,
         duration_minutes=duration,
         deadline_note=deadline_note,
+        start_note=start_note,
+        start_estimated=start_estimated,
     )
+
+
+def _infer_estimated_start(
+    received_at: datetime,
+    deadline: datetime | None,
+    duration_minutes: int | None,
+    kind: str,
+) -> datetime | None:
+    earliest = received_at + timedelta(minutes=30)
+    if deadline and earliest >= deadline:
+        return None
+    duration = duration_minutes or (45 if kind == "interview" else 60)
+    for day_offset in range(0, 8):
+        day = earliest.date() + timedelta(days=day_offset)
+        for hour in (9, 14, 19):
+            candidate = datetime.combine(day, time(hour, 0), tzinfo=LOCAL_TZ)
+            if candidate < earliest:
+                continue
+            if deadline and candidate + timedelta(minutes=duration) > deadline:
+                continue
+            return candidate
+    if deadline:
+        candidate = max(earliest, deadline - timedelta(minutes=min(duration, 60)))
+    else:
+        candidate = earliest
+    candidate = candidate.replace(second=0, microsecond=0)
+    remainder = candidate.minute % 5
+    if remainder:
+        candidate += timedelta(minutes=5 - remainder)
+    return candidate
 
 
 def _minutes_between(start: datetime, end: datetime | None) -> int | None:
