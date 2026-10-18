@@ -84,7 +84,7 @@ CN_TIME_POINT_RE = re.compile(
 
 DURATION_PATTERNS: tuple[re.Pattern[str], ...] = (
     re.compile(
-        r"(?:考试|笔试|测评|作答|答题)(?:时长|时间)(?:为|是)?\s*[:：]?\s*"
+        r"(?:考试|笔试|测评|作答|答题|面试|面谈)(?:时长|时间)(?:为|是)?\s*[:：]?\s*"
         r"(?P<n>\d{1,3}(?:\.\d+)?)\s*(?P<unit>分钟|min(?:ute)?s?|小时|h(?:our)?s?)",
         re.IGNORECASE,
     ),
@@ -95,7 +95,7 @@ DURATION_PATTERNS: tuple[re.Pattern[str], ...] = (
     ),
     re.compile(
         r"(?P<n>\d{1,3}(?:\.\d+)?)\s*(?P<unit>分钟|min(?:ute)?s?|小时|h(?:our)?s?)"
-        r"\s*(?:的)?(?:考试|笔试|测评|作答|答题)",
+        r"\s*(?:的)?(?:考试|笔试|测评|作答|答题|面试|面谈)",
         re.IGNORECASE,
     ),
 )
@@ -104,6 +104,11 @@ RELATIVE_DEADLINE_PATTERNS: tuple[re.Pattern[str], ...] = (
     re.compile(
         r"(?:收到|收到本|收到此)?(?:封)?(?:邮件|通知)(?:之)?后\s*"
         r"(?P<n>\d{1,3})\s*(?P<unit>分钟|小时|天)(?:之)?内",
+        re.IGNORECASE,
+    ),
+    re.compile(
+        r"(?:收到|自收到)(?:本)?(?:封)?(?:邮件|通知)(?:之)?起\s*"
+        r"(?P<n>\d{1,3})\s*(?P<unit>分钟|小时|天)(?:之)?内\s*(?:有效|完成|作答)?",
         re.IGNORECASE,
     ),
     re.compile(
@@ -124,6 +129,14 @@ EXAM_PREFIX_RULES: tuple[tuple[re.Pattern[str], float], ...] = (
     (re.compile(r"assessment\s+date|test\s+date|exam\s+date|start\s+time|opens?\s+at", re.I), 8),
     (re.compile(r"正式考试|在线考试|线上考试|在线笔试", re.I), 3),
 )
+INTERVIEW_PREFIX_RULES: tuple[tuple[re.Pattern[str], float], ...] = (
+    (re.compile(r"面试时间|面谈时间|面试日期|面试安排|面试开始|入场时间|初试时间|复试时间", re.I), 8),
+    (re.compile(r"(?:一面|二面|三面|终面|HR\s*面|技术面|业务面|群面)时间", re.I), 7),
+    (re.compile(r"interview\s+(?:time|date|scheduled|schedule)", re.I), 8),
+    (re.compile(r"面试\s*(?:将于|定于|安排在|时间为|时间是|在|于)", re.I), 6),
+    (re.compile(r"interview\s+(?:on|at)\s*$", re.I), 6),
+    (re.compile(r"(?:video|phone|onsite)\s+interview", re.I), 3),
+)
 DEADLINE_PREFIX_RULES: tuple[tuple[re.Pattern[str], float], ...] = (
     (re.compile(r"截止(?:时间|日期|至)?|报名截止|确认截止|作答截止|提交截止", re.I), 9),
     (re.compile(r"有效期至|失效时间|到期时间|链接有效期", re.I), 9),
@@ -134,6 +147,12 @@ EXAM_SUFFIX_RULES: tuple[tuple[re.Pattern[str], float], ...] = (
     (re.compile(r"(?:参加|完成|进行|开始).{0,10}(?:笔试|测评|在线考试|考试)", re.I), 4.5),
     (re.compile(r"(?:笔试|测评|考试).{0,8}(?:开始|开考|进行)", re.I), 4),
     (re.compile(r"准时(?:参加|开始|登录|进入)", re.I), 4),
+)
+INTERVIEW_SUFFIX_RULES: tuple[tuple[re.Pattern[str], float], ...] = (
+    (re.compile(r"(?:参加|进行|安排|开始|出席).{0,10}(?:面试|面谈|初试|复试|终面|终试)", re.I), 4.5),
+    (re.compile(r"(?:面试|面谈|初试|复试|终面).{0,8}(?:开始|进行)", re.I), 4),
+    (re.compile(r"interview.{0,12}(?:start|begin|held)", re.I), 4),
+    (re.compile(r"准时(?:参加|开始|加入|进入)", re.I), 4),
 )
 DEADLINE_SUFFIX_RULES: tuple[tuple[re.Pattern[str], float], ...] = (
     (re.compile(r"(?:之)?前\s*(?:完成|提交|确认|回复|答复|反馈|告知|接受|登录|进入|作答|关闭|截止)", re.I), 8),
@@ -400,17 +419,29 @@ def _context_scores(
     text: str,
     candidate: TimingCandidate,
     subject_len: int,
+    *,
+    kind: str = "exam",
 ) -> None:
     start = candidate.span_start
     end = candidate.span_end
     prefix = text[max(0, start - 65) : start]
     suffix = text[end : end + 45]
 
-    exam_score = _last_rule_score(prefix, suffix, EXAM_PREFIX_RULES, EXAM_SUFFIX_RULES)
+    if kind == "interview":
+        prefix_rules = INTERVIEW_PREFIX_RULES
+        suffix_rules = INTERVIEW_SUFFIX_RULES
+        subject_terms = r"面试|面谈|初试|复试|终面|终试|interview"
+    else:
+        prefix_rules = EXAM_PREFIX_RULES
+        suffix_rules = EXAM_SUFFIX_RULES
+        subject_terms = r"笔试|测评|考试|assessment|test|exam"
+    exam_score = _last_rule_score(prefix, suffix, prefix_rules, suffix_rules)
     deadline_score = _last_rule_score(prefix, suffix, DEADLINE_PREFIX_RULES, DEADLINE_SUFFIX_RULES)
-    if start < subject_len and re.search(r"笔试|测评|考试|assessment|test|exam", text[:subject_len], re.I):
+    if start < subject_len and re.search(subject_terms, text[:subject_len], re.I):
         exam_score += 3.5
-        candidate.reasons.append("日期出现在笔试相关主题中")
+        candidate.reasons.append(
+            "日期出现在面试相关主题中" if kind == "interview" else "日期出现在笔试相关主题中"
+        )
 
     polite_before = bool(re.search(r"请(?:于|在)?|务必(?:于)?|须于|需于", prefix))
     before_marker = bool(re.search(r"(?:之)?前(?=\s*(?:完成|提交|确认|登录|进入|作答|关闭)|[，。；;\n])", suffix))
@@ -418,7 +449,7 @@ def _context_scores(
         deadline_score += 4
         candidate.reasons.append("带有请于……前完成的截止语义")
 
-    if deadline_score >= 5 and deadline_score >= exam_score + 0.5:
+    if deadline_score >= 5 and deadline_score >= exam_score:
         candidate.kind = "deadline"
     elif exam_score >= 3:
         candidate.kind = "exam"
@@ -429,7 +460,9 @@ def _context_scores(
     candidate.deadline_score = deadline_score
 
 
-def extract_timings(text: str, received_at: datetime) -> TimingExtraction:
+def extract_timings(
+    text: str, received_at: datetime, *, kind: str = "exam"
+) -> TimingExtraction:
     prepared = normalize_timing_text(text)
     subject_len = prepared.find("\n")
     if subject_len < 0:
@@ -473,7 +506,7 @@ def extract_timings(text: str, received_at: datetime) -> TimingExtraction:
             date_mention=date_mention,
             time_mention=time_mention,
         )
-        _context_scores(prepared, candidate, subject_len)
+        _context_scores(prepared, candidate, subject_len, kind=kind)
         raw_candidates.append(candidate)
 
     # A date range such as "10月20日 10:00 至 10月22日 22:00" becomes a start

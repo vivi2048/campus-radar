@@ -11,6 +11,8 @@ from ..extract.links import normalize_url
 from ..timeutil import local_iso, normalize_optional_iso, utc_now_iso
 
 EVENT_FIELDS = {
+    "kind",
+    "interview_round",
     "company",
     "role",
     "exam_start",
@@ -30,6 +32,7 @@ EVENT_FIELDS = {
 }
 ALLOWED_STATUS = {"pending", "done", "cancelled"}
 ALLOWED_MODES = {"online", "offline", "unknown"}
+ALLOWED_KINDS = {"exam", "interview"}
 AUTO_EDIT_FIELDS = EVENT_FIELDS - {"status", "ignored", "notes"}
 MAX_TEXT = 5000
 
@@ -46,6 +49,8 @@ def serialize_event(row: dict[str, Any], *, include_source: bool = False) -> dic
     event = {
         "id": row["id"],
         "account_id": row.get("account_id"),
+        "kind": row.get("kind") or "exam",
+        "interview_round": row.get("interview_round") or "",
         "company": row.get("company") or "",
         "role": row.get("role") or "",
         "exam_start": row.get("exam_start"),
@@ -127,7 +132,7 @@ def _normalize_url(value: Any) -> str | None:
         return None
     url = normalize_url(text)
     if not re.match(r"^https?://[^\s]+$", url, re.IGNORECASE):
-        raise EventValidationError("考试链接必须以 http:// 或 https:// 开头")
+        raise EventValidationError("链接必须以 http:// 或 https:// 开头")
     return url[:2048]
 
 
@@ -137,9 +142,9 @@ def _normalize_duration(value: Any) -> int | None:
     try:
         minutes = int(value)
     except (TypeError, ValueError) as exc:
-        raise EventValidationError("考试时长必须是分钟数") from exc
+        raise EventValidationError("时长必须是分钟数") from exc
     if minutes < 1 or minutes > 1440:
-        raise EventValidationError("考试时长需在 1 到 1440 分钟之间")
+        raise EventValidationError("时长需在 1 到 1440 分钟之间")
     return minutes
 
 
@@ -156,22 +161,35 @@ def _normalize_time_pair(
         start_dt = datetime.fromisoformat(normalized_start)
         end_dt = datetime.fromisoformat(normalized_end)
         if end_dt < start_dt:
-            raise EventValidationError("考试结束时间不能早于开始时间")
+            raise EventValidationError("结束时间不能早于开始时间")
     return normalized_start, normalized_end
 
 
 def _validate_status(value: Any) -> str:
     status = str(value or "pending")
     if status not in ALLOWED_STATUS:
-        raise EventValidationError("无效的笔试状态")
+        raise EventValidationError("无效的状态")
     return status
 
 
 def _validate_mode(value: Any) -> str:
     mode = str(value or "unknown")
     if mode not in ALLOWED_MODES:
-        raise EventValidationError("无效的考试形式")
+        raise EventValidationError("无效的形式")
     return mode
+
+
+def _validate_kind(value: Any) -> str:
+    kind = str(value or "exam")
+    if kind not in ALLOWED_KINDS:
+        raise EventValidationError("无效的记录类型")
+    return kind
+
+
+def _normalize_round(value: Any, kind: str) -> str | None:
+    if kind != "interview":
+        return None
+    return _clean_optional_text(value, 20)
 
 
 def _compute_needs_review(company: str, exam_start: str | None, exam_time_known: bool) -> bool:
@@ -182,6 +200,8 @@ def create_manual_event(db: Database, payload: dict[str, Any]) -> dict[str, Any]
     company = str(payload.get("company") or "").strip()[:100]
     if not company:
         raise EventValidationError("请填写公司名称")
+    kind = _validate_kind(payload.get("kind"))
+    interview_round = _normalize_round(payload.get("interview_round"), kind)
     exam_start, exam_end = _normalize_time_pair(payload.get("exam_start"), payload.get("exam_end"))
     if exam_end and not exam_start:
         raise EventValidationError("填写结束时间前，请先填写开始时间")
@@ -193,16 +213,18 @@ def create_manual_event(db: Database, payload: dict[str, Any]) -> dict[str, Any]
     event_id = db.execute(
         """
         INSERT INTO events (
-            account_id, company, role, exam_start, exam_end, exam_time_known,
+            account_id, kind, interview_round, company, role, exam_start, exam_end, exam_time_known,
             deadline, deadline_time_known, duration_minutes, platform, exam_url,
             mode, location, access_code, status, ignored, needs_review,
             manually_edited, auto_notes, notes, source_subject, source_sender,
             source_received_at, source_body, source_count, is_demo,
             created_at, updated_at
-        ) VALUES (NULL, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0, ?, 1,
+        ) VALUES (NULL, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0, ?, 1,
                   NULL, ?, NULL, NULL, NULL, NULL, 1, 0, ?, ?)
         """,
         (
+            kind,
+            interview_round or "",
             company,
             _clean_optional_text(payload.get("role"), 100) or "",
             exam_start,
@@ -240,6 +262,17 @@ def update_event(db: Database, event_id: int, changes: dict[str, Any]) -> dict[s
     values: dict[str, Any] = {}
     manual_fields = set(changes) & AUTO_EDIT_FIELDS
 
+    if "kind" in changes or "interview_round" in changes:
+        final_kind = _validate_kind(changes.get("kind", row.get("kind") or "exam"))
+        if "kind" in changes:
+            values["kind"] = final_kind
+        if final_kind == "interview":
+            if "interview_round" in changes:
+                values["interview_round"] = _normalize_round(
+                    changes.get("interview_round"), final_kind
+                ) or ""
+        else:
+            values["interview_round"] = ""
     if "company" in changes:
         company = str(changes["company"] or "").strip()[:100]
         if not company:
@@ -315,7 +348,7 @@ def update_event(db: Database, event_id: int, changes: dict[str, Any]) -> dict[s
 
 def set_event_status(db: Database, event_id: int, status: str) -> dict[str, Any] | None:
     if status not in ALLOWED_STATUS:
-        raise EventValidationError("无效的笔试状态")
+        raise EventValidationError("无效的状态")
     if not get_raw_event(db, event_id):
         return None
     db.execute(
@@ -333,6 +366,12 @@ def _norm_company(value: str | None) -> str:
 def _norm_role(value: str | None) -> str:
     text = unicodedata.normalize("NFKC", value or "").casefold()
     return re.sub(r"[\s·,，.。()（）岗位职位]", "", text)
+
+
+def _norm_round(value: str | None) -> str:
+    text = unicodedata.normalize("NFKC", value or "").casefold()
+    text = re.sub(r"(?:第|轮次|面试|面谈|\s|[-—–|｜·:：])", "", text)
+    return text
 
 
 def _parse_iso(value: str | None) -> datetime | None:
@@ -354,6 +393,8 @@ def find_duplicate_event(
     exam_start: str | None,
     exam_url: str | None,
     reschedule: bool = False,
+    kind: str = "exam",
+    interview_round: str | None = None,
 ) -> dict[str, Any] | None:
     rows = db.fetch_all(
         "SELECT * FROM events WHERE account_id = ? ORDER BY id DESC",
@@ -361,8 +402,14 @@ def find_duplicate_event(
     )
     company_key = _norm_company(company)
     role_key = _norm_role(role)
+    round_key = _norm_round(interview_round)
     start_dt = _parse_iso(exam_start)
     for row in rows:
+        if (row.get("kind") or "exam") != kind:
+            continue
+        row_round = _norm_round(row.get("interview_round"))
+        if kind == "interview" and round_key and row_round and round_key != row_round:
+            continue
         row_start = _parse_iso(row.get("exam_start"))
         if exam_url and row.get("exam_url") == exam_url:
             if (
@@ -422,6 +469,7 @@ def merge_into_event(
         checks = (
             "company",
             "role",
+            "interview_round",
             "platform",
             "exam_url",
             "location",
@@ -567,6 +615,46 @@ def seed_demo(db: Database) -> int:
             "time_known": False,
             "needs_review": True,
         },
+        {
+            "kind": "interview",
+            "interview_round": "一面",
+            "company": "百度",
+            "role": "产品运营",
+            "day_offset": 3,
+            "hour": 15,
+            "end_hour": 16,
+            "deadline_day": 1,
+            "deadline_hour": 18,
+            "platform": "腾讯会议",
+            "mode": "online",
+            "url": "https://meeting.tencent.com/demo",
+            "access_code": "会议号 123 456 789",
+            "notes": "请提前 10 分钟进入会议等候室，确认摄像头和麦克风正常。",
+            "subject": "【百度】产品运营一面面试邀请",
+            "sender": "百度招聘 <campus@baidu.com>",
+            "extra": "面试形式：视频面试\n面试官：业务负责人",
+        },
+        {
+            "kind": "interview",
+            "interview_round": "二面",
+            "company": "招商银行",
+            "role": "数据工程师",
+            "day_offset": 6,
+            "hour": 10,
+            "end_hour": 11,
+            "end_minute": 30,
+            "deadline_day": 5,
+            "deadline_hour": 20,
+            "platform": "现场",
+            "mode": "offline",
+            "url": None,
+            "access_code": None,
+            "location": "深圳市福田区深南大道招商银行大厦",
+            "notes": "请携带身份证件，提前 20 分钟到场签到。",
+            "subject": "【招商银行】数据工程师二面面试通知",
+            "sender": "招商银行招聘 <campus@cmbchina.com>",
+            "extra": "面试地点：深圳市福田区深南大道招商银行大厦",
+        },
     ]
 
     inserted = 0
@@ -604,28 +692,41 @@ def seed_demo(db: Database) -> int:
             if time_known
             else "时间待确认"
         )
+        kind = item.get("kind", "exam")
+        is_interview = kind == "interview"
+        event_label = "面试" if is_interview else "在线笔试"
+        time_label = "面试时间" if is_interview else "考试时间"
+        platform_label = "面试平台" if is_interview else "考试平台"
+        link_label = "面试链接" if is_interview else "考试链接"
+        code_label = "会议信息" if is_interview else "考试口令"
+        location_line = (
+            f"面试地点：{item['location']}\n" if item.get("location") else ""
+        )
         source_body = (
             f"同学你好：\n\n感谢你投递{item['company']}「{item['role']}」岗位，"
-            f"现邀请你参加在线笔试。\n\n"
-            f"考试时间：{chinese_date} {time_text}（北京时间）\n"
-            f"考试平台：{item['platform']}\n"
-            f"{'考试链接：' + item['url'] + chr(10) if item['url'] else ''}"
-            f"{'考试口令：' + item['access_code'] + chr(10) if item['access_code'] else ''}"
-            f"{item['extra']}\n\n{item['notes']}\n\n此为示例数据，不对应真实考试。"
+            f"现邀请你参加{event_label}。\n\n"
+            f"{time_label}：{chinese_date} {time_text}（北京时间）\n"
+            f"{platform_label}：{item['platform']}\n"
+            f"{link_label}：{item['url'] + chr(10) if item['url'] else ''}"
+            f"{code_label + '：' + item['access_code'] + chr(10) if item['access_code'] else ''}"
+            f"{location_line}"
+            f"{item['extra']}\n\n{item['notes']}\n\n此为示例数据，不对应真实安排。"
         )
         event_id = db.execute(
             """
             INSERT INTO events (
-                account_id, company, role, exam_start, exam_end, exam_time_known,
+                account_id, kind, interview_round, company, role, exam_start, exam_end, exam_time_known,
                 deadline, deadline_time_known, duration_minutes, platform, exam_url,
                 mode, location, access_code, status, ignored, needs_review,
                 manually_edited, auto_notes, notes, source_subject, source_sender,
                 source_received_at, source_body, source_count, is_demo,
                 created_at, updated_at
-            ) VALUES (NULL, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NULL, ?, ?, 0, ?, 0,
-                      ?, NULL, ?, ?, ?, ?, 1, 1, ?, ?)
+            ) VALUES (NULL, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0, ?, 0,
+                      NULL, ?, ?, ?, ?, ?, 1, 1, ?, ?)
             """,
             (
+                kind,
+                item.get("interview_round", ""),
                 item["company"],
                 item["role"],
                 exam_start,
@@ -637,6 +738,7 @@ def seed_demo(db: Database) -> int:
                 item["platform"],
                 item["url"],
                 item["mode"],
+                item.get("location"),
                 item["access_code"],
                 item.get("status", "pending"),
                 int(item.get("needs_review", False)),

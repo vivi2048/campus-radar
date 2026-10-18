@@ -141,7 +141,7 @@ class MailboxSession:
     def _identify(self, conn: imaplib.IMAP4_SSL) -> None:
         # NetEase requires an IMAP ID command before selecting the mailbox.
         try:
-            payload = '("name" "exam-radar" "version" "1.0" "vendor" "local")'
+            payload = '("name" "campus-radar" "version" "1.0" "vendor" "local")'
             typ, data = conn._simple_command("ID", payload)
             conn._untagged_response(typ, data, "ID")
         except Exception:

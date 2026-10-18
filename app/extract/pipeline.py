@@ -12,6 +12,7 @@ from .fields import ExtractedFields, extract_fields
 class Analysis:
     accepted: bool
     classification: Classification
+    kind: str = ""
     fields: ExtractedFields | None = None
     timing: TimingExtraction | None = None
     needs_review: bool = False
@@ -31,9 +32,11 @@ def analyze_email(parsed: ParsedEmail) -> Analysis:
         return Analysis(
             accepted=False,
             classification=classification,
+            kind=classification.kind,
             reasons=classification.reasons,
         )
 
+    kind = classification.kind or "exam"
     combined = f"{parsed.subject}\n{parsed.body_text}"
     fields = extract_fields(
         parsed.subject,
@@ -41,8 +44,9 @@ def analyze_email(parsed: ParsedEmail) -> Analysis:
         parsed.sender_name,
         parsed.sender_email,
         parsed.links,
+        kind=kind,
     )
-    timing = extract_timings(combined, parsed.received_at)
+    timing = extract_timings(combined, parsed.received_at, kind=kind)
 
     notes_parts: list[str] = []
     if fields.auto_notes:
@@ -59,6 +63,7 @@ def analyze_email(parsed: ParsedEmail) -> Analysis:
     return Analysis(
         accepted=True,
         classification=classification,
+        kind=kind,
         fields=fields,
         timing=timing,
         needs_review=needs_review,

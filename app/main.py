@@ -41,7 +41,7 @@ from .timeutil import local_now
 
 
 def _configure_logger(settings: Settings) -> logging.Logger:
-    logger = logging.getLogger("exam-radar")
+    logger = logging.getLogger("campus-radar")
     logger.setLevel(logging.INFO)
     logger.propagate = False
     if logger.handlers:
@@ -114,7 +114,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         if (
             request.url.path.startswith("/api/")
             and request.method not in {"GET", "HEAD", "OPTIONS"}
-            and request.headers.get("X-Exam-Radar-Request") != "1"
+            and request.headers.get("X-Campus-Radar-Request") != "1"
         ):
             response = JSONResponse(status_code=403, content={"detail": "请求来源校验失败"})
         else:
@@ -230,6 +230,14 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             raise HTTPException(status_code=409, detail="这个邮箱正在同步中，请稍候。")
         return {"started": True, "account": get_account(db, account_id)}
 
+    @app.post("/api/accounts/{account_id}/rescan", status_code=202)
+    async def accounts_rescan(account_id: int):
+        if not get_raw_account(db, account_id):
+            raise HTTPException(status_code=404, detail="邮箱账号不存在")
+        if not sync_manager.trigger(account_id, reason="rescan", rescan=True):
+            raise HTTPException(status_code=409, detail="这个邮箱正在同步中，请稍候。")
+        return {"started": True, "rescan": True, "account": get_account(db, account_id)}
+
     @app.delete("/api/accounts/{account_id}")
     async def accounts_delete(account_id: int):
         if sync_manager.is_active(account_id):
@@ -258,7 +266,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     async def events_detail(event_id: int):
         event = get_event(db, event_id, include_source=True)
         if not event:
-            raise HTTPException(status_code=404, detail="笔试记录不存在")
+            raise HTTPException(status_code=404, detail="记录不存在")
         return event
 
     @app.post("/api/events", status_code=201)
@@ -275,13 +283,13 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         except EventValidationError as exc:
             raise HTTPException(status_code=400, detail=str(exc)) from exc
         if not event:
-            raise HTTPException(status_code=404, detail="笔试记录不存在")
+            raise HTTPException(status_code=404, detail="记录不存在")
         return event
 
     @app.delete("/api/events/{event_id}")
     async def events_delete(event_id: int):
         if not delete_event(db, event_id):
-            raise HTTPException(status_code=404, detail="笔试记录不存在")
+            raise HTTPException(status_code=404, detail="记录不存在")
         return {"deleted": True}
 
     @app.post("/api/demo", status_code=201)

@@ -4,11 +4,20 @@ const DAY_MS = 86_400_000;
 const VALID_VIEWS = new Set(["dashboard", "library", "accounts"]);
 const VIEW_TITLES = {
   dashboard: "总览",
-  library: "笔试库",
+  library: "日程",
   accounts: "邮箱设置",
 };
 const WEEKDAYS = ["周日", "周一", "周二", "周三", "周四", "周五", "周六"];
 const WEEKDAYS_NARROW = ["日", "一", "二", "三", "四", "五", "六"];
+const KIND_LABELS = {
+  exam: "笔试",
+  interview: "面试",
+};
+const KIND_FILTERS = [
+  { id: "all", label: "全部" },
+  { id: "exam", label: "笔试" },
+  { id: "interview", label: "面试" },
+];
 const LIBRARY_FILTERS = [
   { id: "all", label: "全部" },
   { id: "upcoming", label: "待参加" },
@@ -52,6 +61,7 @@ const ICONS = {
   edit: '<path d="M13.5 6.5 17.5 10.5M5 19l3.8-.8L19.6 7.4a2.1 2.1 0 0 0-3-3L5.8 15.2 5 19Z"/>',
   dot: '<circle cx="12" cy="12" r="4" fill="currentColor" stroke="none"/>',
   form: '<rect x="4" y="3" width="16" height="18" rx="3"/><path d="M8 8h8M8 12h8M8 16h5"/>',
+  video: '<rect x="3" y="6" width="12" height="12" rx="2.5"/><path d="m15 10 6-3v10l-6-3"/>',
 };
 
 const state = {
@@ -62,6 +72,7 @@ const state = {
   meta: { auto_sync_minutes: 30, demo_count: 0 },
   providerId: "qq",
   libraryFilter: "all",
+  kindFilter: "all",
   libraryQuery: "",
   drawer: null,
   drawerCloseTimer: null,
@@ -218,9 +229,9 @@ function timeRangeText(event) {
 
 function scheduleText(event, options = {}) {
   const { includeWeekday = true } = options;
-  if (!event.exam_start) return "考试时间待确认";
+  if (!event.exam_start) return "时间待确认";
   const start = beijingInfo(event.exam_start);
-  if (!start) return "考试时间待确认";
+  if (!start) return "时间待确认";
   let text = `${start.month}月${start.day}日`;
   if (includeWeekday) text += ` ${start.weekdayName}`;
   if (!event.exam_time_known) {
@@ -402,6 +413,31 @@ function displayRole(event) {
   return event.role || "岗位未注明";
 }
 
+function eventKind(event) {
+  return event?.kind === "interview" ? "interview" : "exam";
+}
+
+function isInterviewEvent(event) {
+  return eventKind(event) === "interview";
+}
+
+function kindLabel(event) {
+  return KIND_LABELS[eventKind(event)];
+}
+
+function kindBadge(event) {
+  const kind = eventKind(event);
+  return `<span class="kind-chip is-${kind}">${KIND_LABELS[kind]}</span>`;
+}
+
+function eventNoun(event) {
+  return isInterviewEvent(event) ? "面试" : "笔试";
+}
+
+function eventLinkLabel(event) {
+  return isInterviewEvent(event) ? "面试入口" : "考试入口";
+}
+
 function modeLabel(mode) {
   if (mode === "online") return "线上";
   if (mode === "offline") return "线下";
@@ -411,7 +447,7 @@ function modeLabel(mode) {
 function reviewReason(event) {
   const missing = [];
   if (!event.company) missing.push("公司名称");
-  if (!event.exam_start) missing.push("考试日期");
+  if (!event.exam_start) missing.push(`${eventNoun(event)}时间`);
   else if (!event.exam_time_known) missing.push("具体开始时间");
   if (!missing.length) return "有信息待你确认";
   return `${missing.join("、")}待确认`;
@@ -449,12 +485,21 @@ function syncCountsSummary(account) {
   const scanned = Number(counts.scanned || 0);
   const created = Number(counts.created || 0);
   const merged = Number(counts.merged || 0);
-  if (!scanned && !created && !merged) return "没有发现新的笔试邮件";
+  const reclassified = Number(counts.reclassified || 0);
+  if (!scanned && !created && !merged && !reclassified) return "没有发现新的笔试或面试邮件";
   const parts = [`检查 ${scanned} 封`];
-  if (created) parts.push(`新增 ${created} 场`);
+  if (created) parts.push(createdBreakdown(counts) || `新增 ${created} 场`);
+  if (reclassified) parts.push(`重新识别 ${reclassified} 条`);
   if (merged) parts.push(`合并 ${merged} 条提醒`);
   if (counts.errors) parts.push(`${counts.errors} 封读取失败`);
   return parts.join(" · ");
+}
+
+function createdBreakdown(counts) {
+  const exams = Number(counts.created_exams || 0);
+  const interviews = Number(counts.created_interviews || 0);
+  if (!exams && !interviews) return "";
+  return `新增 ${exams + interviews} 场（笔试 ${exams} / 面试 ${interviews}）`;
 }
 
 function accountStatusInfo(account) {
@@ -493,7 +538,7 @@ class ApiError extends Error {
 async function api(path, options = {}) {
   const request = { method: options.method || "GET", headers: {} };
   if (request.method !== "GET") {
-    request.headers["X-Exam-Radar-Request"] = "1";
+    request.headers["X-Campus-Radar-Request"] = "1";
   }
   if (options.body !== undefined) {
     request.headers["Content-Type"] = "application/json";
@@ -503,7 +548,7 @@ async function api(path, options = {}) {
   try {
     response = await fetch(path, request);
   } catch {
-    throw new ApiError("无法连接本地服务，请确认笔试雷达正在运行。", 0);
+    throw new ApiError("无法连接本地服务，请确认校招雷达正在运行。", 0);
   }
   let data = null;
   try {
@@ -560,7 +605,7 @@ async function boot() {
   const priorError = el.boot.querySelector(".boot-error, .boot-actions");
   if (priorError) priorError.remove();
   el.boot.querySelector(".boot-title").textContent = "正在校准雷达";
-  el.boot.querySelector(".boot-copy").textContent = "整理你的笔试时间表…";
+  el.boot.querySelector(".boot-copy").textContent = "整理你的校招日程…";
 
   try {
     await loadAllData();
@@ -615,7 +660,7 @@ function handleHashChange() {
 }
 
 function renderCurrentView({ scroll = false } = {}) {
-  document.title = `${VIEW_TITLES[state.view]} · 笔试雷达`;
+  document.title = `${VIEW_TITLES[state.view]} · 校招雷达`;
   updateSidebar();
   if (state.view === "dashboard") {
     el.root.innerHTML = renderDashboard();
@@ -759,7 +804,7 @@ function renderDashboard() {
     ${viewHeader({
       eyebrow: `TODAY · ${nowInfo.month}月${nowInfo.day}日 ${nowInfo.weekdayName}`,
       title: "接下来，稳稳拿下。",
-      subtitle: "把散落在邮箱里的笔试邀请，收进一张清晰、可编辑的时间表。",
+      subtitle: "把散落在邮箱里的笔试和面试邀请，收进一张清晰、可编辑的秋招日程表。",
       actions: headerActions({ refresh: true, add: true }),
       withDemo: false,
     })}
@@ -781,22 +826,22 @@ function renderDashboard() {
 
 function renderFocusCard(event, noEvents) {
   if (!event) {
-    const title = noEvents ? "下一场笔试，还在邮箱里。" : "这一轮，先告一段落。";
+    const title = noEvents ? "下一场安排，还在邮箱里。" : "这一轮，先告一段落。";
     const copy = noEvents
-      ? "连接招聘邮箱后，雷达会自动识别笔试邀请、考试时间、截止时间和考试入口。"
-      : "目前没有待参加的笔试。已完成或已结束的记录，都收在笔试库里。";
+      ? "连接招聘邮箱后，雷达会自动识别笔试和面试邀请、时间、截止确认和入口链接。"
+      : "目前没有待参加的笔试或面试。已完成或已结束的记录，都收在日程里。";
     const actions = noEvents
       ? `<div class="focus-actions">
           <button class="button button-primary" type="button" data-action="focus-account-form">连接招聘邮箱 ${icon("arrowRight", 15)}</button>
           <button class="button button-ghost" type="button" data-action="load-demo">看看示例</button>
         </div>`
       : `<div class="focus-actions">
-          <button class="button button-primary" type="button" data-nav="library">打开笔试库 ${icon("arrowRight", 15)}</button>
+          <button class="button button-primary" type="button" data-nav="library">打开日程 ${icon("arrowRight", 15)}</button>
           <button class="button button-ghost" type="button" data-action="add-event">${icon("plus", 15)}手动添加</button>
         </div>`;
     return `<article class="focus-card">
       <div class="focus-empty">
-        <div class="focus-kicker">EXAM-RADAR · 待命</div>
+        <div class="focus-kicker">CAMPUS-RADAR · 待命</div>
         <h2>${title}</h2>
         <p>${copy}</p>
         ${actions}
@@ -807,8 +852,12 @@ function renderFocusCard(event, noEvents) {
   const countdown = focusCountdown(event);
   const status = statusInfo(event);
   const url = safeHttpUrl(event.exam_url);
-  const platform = event.platform || modeLabel(event.mode) || "笔试安排";
-  const secondMetaLabel = event.deadline ? "截止时间" : (event.duration_minutes ? "作答时长" : "考试形式");
+  const platform = event.platform || modeLabel(event.mode) || (isInterviewEvent(event) ? "面试安排" : "笔试安排");
+  const secondMetaLabel = event.deadline
+    ? (isInterviewEvent(event) ? "确认截止" : "截止时间")
+    : (event.duration_minutes
+      ? (isInterviewEvent(event) ? "面试时长" : "作答时长")
+      : (isInterviewEvent(event) ? "面试形式" : "考试形式"));
   const secondMetaValue = event.deadline
     ? deadlineText(event, { includeWeekday: false })
     : (event.duration_minutes ? `${event.duration_minutes} 分钟` : (modeLabel(event.mode) || "待确认"));
@@ -818,14 +867,17 @@ function renderFocusCard(event, noEvents) {
 
   return `<article class="focus-card">
     <div class="focus-top">
-      <div class="focus-kicker">${isReviewEvent(event) ? "NEEDS REVIEW · 待确认" : "NEXT UP · 下一场"}</div>
+      <div class="focus-kicker">
+        ${isReviewEvent(event) ? "NEEDS REVIEW · 待确认" : "NEXT UP · 下一场"}
+        <span class="focus-kind is-${eventKind(event)}">${kindLabel(event)}</span>
+      </div>
       <span class="focus-platform">${escapeHtml(platform)}</span>
     </div>
     <div class="focus-main">
       ${companyLogo(displayCompany(event), "large")}
       <div>
         <div class="focus-company">${escapeHtml(displayCompany(event))}</div>
-        <div class="focus-role">${escapeHtml(displayRole(event))}${deadlines ? ` ${deadlines}` : ""}</div>
+        <div class="focus-role">${escapeHtml(displayRole(event))}${event.interview_round ? ` · ${escapeHtml(event.interview_round)}` : ""}${deadlines ? ` ${deadlines}` : ""}</div>
       </div>
       <div class="focus-countdown${countdown.text ? " is-text" : ""}">
         <strong>${escapeHtml(countdown.primary)}</strong>
@@ -834,7 +886,7 @@ function renderFocusCard(event, noEvents) {
     </div>
     <div class="focus-meta">
       <div class="focus-meta-item">
-        <span>考试时间</span>
+        <span>${eventNoun(event)}时间</span>
         <strong>${escapeHtml(scheduleText(event))}</strong>
       </div>
       <div class="focus-meta-item">
@@ -844,7 +896,7 @@ function renderFocusCard(event, noEvents) {
     </div>
     <div class="focus-actions">
       <button class="button button-primary" type="button" data-action="open-event" data-id="${event.id}">查看详情 ${icon("arrowRight", 15)}</button>
-      ${url ? `<a class="button button-ghost" href="${escapeHtml(url)}" target="_blank" rel="noopener noreferrer">${icon("external", 15)}考试入口</a>` : ""}
+      ${url ? `<a class="button button-ghost" href="${escapeHtml(url)}" target="_blank" rel="noopener noreferrer">${icon("external", 15)}${eventLinkLabel(event)}</a>` : ""}
       <span class="status-chip ${status.className}" style="margin-left:4px">${escapeHtml(status.label)}</span>
     </div>
   </article>`;
@@ -880,7 +932,7 @@ function renderStats({ active, review, doneCount, next7 }) {
       iconName: "checkCircle",
       value: doneCount,
       label: "已完成",
-      note: "归档的笔试记录",
+      note: "归档的笔试与面试记录",
     },
   ];
   return `<div class="stat-grid">
@@ -901,12 +953,12 @@ function renderEventPanel(active, focus) {
     <div class="panel-header with-border">
       <div>
         <h2 class="panel-title">待参加</h2>
-        <p class="panel-subtitle">按考试时间排序${active.length > limited.length ? ` · 还有 ${active.length - limited.length} 场在笔试库` : ""}</p>
+        <p class="panel-subtitle">按时间排序${active.length > limited.length ? ` · 还有 ${active.length - limited.length} 场在日程` : ""}</p>
       </div>
       <button class="text-button" type="button" data-nav="library">全部 ${active.length} 场 ${icon("chevronRight", 14)}</button>
     </div>
     <div class="event-list">
-      ${limited.length ? limited.map(renderEventCard).join("") : `<div class="events-empty">暂时没有待参加的笔试。享受一会儿安静的收件箱。</div>`}
+      ${limited.length ? limited.map(renderEventCard).join("") : `<div class="events-empty">暂时没有待参加的笔试或面试。享受一会儿安静的收件箱。</div>`}
     </div>
   </section>`;
 }
@@ -945,20 +997,21 @@ function renderEventCard(event) {
   }
   const isDone = event.status === "done";
   return `<article class="event-card ${phase}" data-event-id="${event.id}">
-    <button class="event-card-main" type="button" data-action="open-event" data-id="${event.id}" aria-label="查看 ${escapeHtml(displayCompany(event))} ${escapeHtml(displayRole(event))} 笔试详情">
+    <button class="event-card-main" type="button" data-action="open-event" data-id="${event.id}" aria-label="查看 ${escapeHtml(displayCompany(event))} ${escapeHtml(displayRole(event))} ${eventNoun(event)}详情">
       ${eventDateBlock(event)}
       <div class="event-content">
         <div class="company-line">
           <span class="company-name">${escapeHtml(displayCompany(event))}</span>
+          ${kindBadge(event)}
         </div>
-        <div class="role-name">${escapeHtml(displayRole(event))}</div>
+        <div class="role-name">${escapeHtml(displayRole(event))}${event.interview_round ? ` · ${escapeHtml(event.interview_round)}` : ""}</div>
         <div class="event-meta">${meta.join("")}</div>
       </div>
     </button>
     <div class="event-side">
       <span class="status-chip ${status.className}">${escapeHtml(status.label)}</span>
       <div class="event-quick-actions">
-        ${url ? `<a class="quick-action" href="${escapeHtml(url)}" target="_blank" rel="noopener noreferrer" title="打开考试入口" aria-label="打开考试入口">${icon("external", 14)}</a>` : ""}
+        ${url ? `<a class="quick-action" href="${escapeHtml(url)}" target="_blank" rel="noopener noreferrer" title="打开${eventLinkLabel(event)}" aria-label="打开${eventLinkLabel(event)}">${icon("external", 14)}</a>` : ""}
         <button class="quick-action${isDone ? " is-done" : ""}" type="button" data-action="toggle-done" data-id="${event.id}" title="${isDone ? "标记为待参加" : "标记为已完成"}" aria-label="${isDone ? "标记为待参加" : "标记为已完成"}">${icon("check", 14)}</button>
       </div>
     </div>
@@ -981,7 +1034,7 @@ function renderWeekPanel(active) {
       <span class="week-range">${today.month}.${today.day} — ${last.month}.${last.day}</span>
     </div>
     <div class="week-days">
-      ${days.map((day) => `<div class="week-day${day.isToday ? " is-today" : ""}${day.count ? " has-events" : ""}" title="${day.count ? `${day.count} 场笔试` : "没有安排"}">
+      ${days.map((day) => `<div class="week-day${day.isToday ? " is-today" : ""}${day.count ? " has-events" : ""}" title="${day.count ? `${day.count} 场安排` : "没有安排"}">
         <span class="week-weekday">${day.isToday ? "今" : day.weekdayNarrow}</span>
         <span class="week-date">${day.day}</span>
         <span class="week-dot" aria-hidden="true"></span>
@@ -1045,7 +1098,7 @@ function renderOnboarding() {
     <div class="onboarding-intro">
       <div class="eyebrow">HOW IT WORKS</div>
       <h2>让雷达替你盯着收件箱。</h2>
-      <p>笔试邀请常常埋在提醒、测评通知和转发邮件里。这里把它们统一抽出来，只需要你确认少量缺失信息。</p>
+      <p>笔试和面试邀请常常埋在提醒、测评通知和转发邮件里。这里把它们统一抽出来，只需要你确认少量缺失信息。</p>
     </div>
     <ol class="onboarding-steps">
       <li class="onboarding-step">
@@ -1054,7 +1107,7 @@ function renderOnboarding() {
       </li>
       <li class="onboarding-step">
         <span class="step-index">02</span>
-        <div><h3>自动抽取</h3><p>识别公司、岗位、考试时间、截止时间、平台和考试入口。</p></div>
+        <div><h3>自动抽取</h3><p>识别公司、岗位、笔试或面试时间、截止确认、平台和入口。</p></div>
       </li>
       <li class="onboarding-step">
         <span class="step-index">03</span>
@@ -1068,43 +1121,79 @@ function renderOnboarding() {
 // Library
 // ---------------------------------------------------------------------------
 
-function filterCounts() {
-  const active = activeEvents();
+function kindScopedEvents() {
+  return state.events.filter(
+    (event) => state.kindFilter === "all" || eventKind(event) === state.kindFilter,
+  );
+}
+
+function kindFilterCounts() {
   return {
     all: state.events.length,
+    exam: state.events.filter((event) => eventKind(event) === "exam").length,
+    interview: state.events.filter((event) => eventKind(event) === "interview").length,
+  };
+}
+
+function filterCounts(events = kindScopedEvents()) {
+  const active = events.filter(isActiveEvent);
+  return {
+    all: events.length,
     upcoming: active.filter((event) => !isReviewEvent(event)).length,
     review: active.filter(isReviewEvent).length,
-    ended: state.events.filter((event) => isEndedPending(event)).length,
-    done: state.events.filter((event) => !event.ignored && event.status === "done").length,
-    ignored: state.events.filter((event) => event.ignored || event.status === "cancelled").length,
+    ended: events.filter(isEndedPending).length,
+    done: events.filter((event) => !event.ignored && event.status === "done").length,
+    ignored: events.filter((event) => event.ignored || event.status === "cancelled").length,
   };
 }
 
 function renderLibrary() {
+  const kindCounts = kindFilterCounts();
   const counts = filterCounts();
-  const pending = counts.upcoming + counts.review;
   return `<div class="library-view">
     ${viewHeader({
-      eyebrow: "LIBRARY · ALL ASSESSMENTS",
-      title: "所有笔试，一处查看。",
-      subtitle: `${state.events.length} 场记录 · ${pending} 场待参加或待确认。可按状态筛选，也可以直接搜索公司或岗位。`,
+      eyebrow: "LIBRARY · EXAMS & INTERVIEWS",
+      title: "笔试与面试，一处查看。",
+      subtitle: `${kindCounts.exam} 场笔试 · ${kindCounts.interview} 场面试，可按类型和状态筛选。`,
       actions: headerActions({ refresh: true, add: true }),
       withDemo: false,
     })}
     ${renderDemoBanner()}
     <div class="library-toolbar">
-      <div class="filter-tabs" role="tablist" aria-label="筛选笔试">
+      <div class="filter-tabs" role="tablist" aria-label="筛选状态">
         ${LIBRARY_FILTERS.map((filter) => `<button class="filter-tab${state.libraryFilter === filter.id ? " is-active" : ""}" type="button" role="tab" aria-selected="${state.libraryFilter === filter.id}" data-filter="${filter.id}">
           ${filter.label}<span class="filter-count">${counts[filter.id] || 0}</span>
         </button>`).join("")}
       </div>
-      <label class="search-field">
-        ${icon("search", 15)}
-        <input class="search-input" id="library-search" type="search" placeholder="搜索公司、岗位或平台" autocomplete="off" value="${escapeHtml(state.libraryQuery)}" aria-label="搜索笔试">
-      </label>
+      <div class="library-tools">
+        <div class="kind-switch" role="tablist" aria-label="筛选类型">
+          ${KIND_FILTERS.map((kind) => `<button class="kind-switch-button${state.kindFilter === kind.id ? " is-active" : ""}" type="button" role="tab" aria-selected="${state.kindFilter === kind.id}" data-kind-filter="${kind.id}">
+            ${kind.label}<span class="filter-count">${kindCounts[kind.id] || 0}</span>
+          </button>`).join("")}
+        </div>
+        <label class="search-field">
+          ${icon("search", 15)}
+          <input class="search-input" id="library-search" type="search" placeholder="搜索公司、岗位或平台" autocomplete="off" value="${escapeHtml(state.libraryQuery)}" aria-label="搜索日程">
+        </label>
+      </div>
     </div>
     <div id="library-results">${renderLibraryResults()}</div>
   </div>`;
+}
+
+function updateLibraryKindUI() {
+  document.querySelectorAll("[data-kind-filter]").forEach((node) => {
+    const active = node.dataset.kindFilter === state.kindFilter;
+    node.classList.toggle("is-active", active);
+    node.setAttribute("aria-selected", String(active));
+  });
+  const counts = filterCounts();
+  document.querySelectorAll("[data-filter]").forEach((node) => {
+    const count = node.querySelector(".filter-count");
+    if (count) count.textContent = String(counts[node.dataset.filter] || 0);
+  });
+  const results = document.getElementById("library-results");
+  if (results) results.innerHTML = renderLibraryResults();
 }
 
 function matchesSearch(event, query) {
@@ -1112,6 +1201,7 @@ function matchesSearch(event, query) {
   const haystack = [
     event.company,
     event.role,
+    event.interview_round,
     event.platform,
     event.source_subject,
     event.notes,
@@ -1127,7 +1217,7 @@ function sortNewestFirst(a, b) {
 }
 
 function renderLibraryResults() {
-  let events = state.events.filter((event) => matchesSearch(event, state.libraryQuery.trim()));
+  let events = kindScopedEvents().filter((event) => matchesSearch(event, state.libraryQuery.trim()));
   const groups = [];
 
   if (state.libraryFilter === "all") {
@@ -1169,11 +1259,14 @@ function renderLibraryResults() {
   const nonEmpty = groups.filter((group) => group.events.length > 0);
   if (!nonEmpty.length) {
     const isSearch = Boolean(state.libraryQuery.trim());
+    const scope = state.kindFilter === "interview"
+      ? "面试"
+      : (state.kindFilter === "exam" ? "笔试" : "笔试或面试");
     return `<div class="library-empty">
       ${renderEmptyState({
         iconName: isSearch ? "search" : "inbox",
-        title: isSearch ? "没有找到匹配的笔试" : "这个分类还没有记录",
-        copy: isSearch ? "换个公司名或岗位关键词试试，搜索会同时匹配邮件主题。" : "连接邮箱同步后，识别出的笔试会收进这里。",
+        title: isSearch ? "没有找到匹配的日程" : "这个分类还没有记录",
+        copy: isSearch ? "换个公司名或岗位关键词试试，搜索会同时匹配邮件主题。" : `连接邮箱同步后，识别出的${scope}会收进这里。`,
         actions: isSearch
           ? `<button class="button button-ghost button-small" type="button" data-action="clear-search">清除搜索</button>`
           : `<button class="button button-primary button-small" type="button" data-action="focus-account-form">连接邮箱</button>`,
@@ -1189,7 +1282,7 @@ function renderLibraryResults() {
       </div>
       <div class="library-table">
         <div class="library-table-head" aria-hidden="true">
-          <span>公司 / 岗位</span><span>考试时间</span><span>平台</span><span>截止时间</span><span>状态</span><span></span>
+          <span>公司 / 岗位</span><span>时间</span><span>平台</span><span>截止时间</span><span>状态</span><span></span>
         </div>
         ${group.events.map(renderLibraryRow).join("")}
       </div>
@@ -1207,17 +1300,18 @@ function renderLibraryRow(event) {
   const platform = event.platform || modeLabel(event.mode) || "—";
   const dateLine = dateOnlyText(event);
   const timeLine = event.exam_time_known ? timeRangeText(event) : (event.exam_start ? "时间待确认" : "等待邮件确认");
+  const round = event.interview_round ? ` · ${escapeHtml(event.interview_round)}` : "";
   return `<article class="library-row${dimmed ? " is-dimmed" : ""}" data-event-id="${event.id}">
-    <button class="library-row-main" type="button" data-action="open-event" data-id="${event.id}" aria-label="查看 ${escapeHtml(displayCompany(event))} 笔试详情">
+    <button class="library-row-main" type="button" data-action="open-event" data-id="${event.id}" aria-label="查看 ${escapeHtml(displayCompany(event))} ${escapeHtml(displayRole(event))} ${eventNoun(event)}详情">
       <span class="library-company">
         ${companyLogo(displayCompany(event), "small")}
         <span class="library-company-copy">
-          <span class="library-company-name">${escapeHtml(displayCompany(event))}${event.source_count > 1 ? ` <span class="source-summary-count">${event.source_count} 封</span>` : ""}</span>
-          <span class="library-role">${escapeHtml(displayRole(event))}</span>
+          <span class="library-company-name">${escapeHtml(displayCompany(event))}${kindBadge(event)}${event.source_count > 1 ? ` <span class="source-summary-count">${event.source_count} 封</span>` : ""}</span>
+          <span class="library-role">${escapeHtml(displayRole(event))}${round}</span>
         </span>
       </span>
       <span class="library-cell">
-        <span class="mobile-label">考试时间</span>
+        <span class="mobile-label">${eventNoun(event)}时间</span>
         <strong>${escapeHtml(dateLine)}</strong>
         <span class="sub">${escapeHtml(timeLine)}</span>
       </span>
@@ -1227,7 +1321,7 @@ function renderLibraryRow(event) {
         <span class="sub">${escapeHtml(modeLabel(event.mode) || "形式待确认")}</span>
       </span>
       <span class="library-cell is-deadline${!dimmed && deadlineIsUrgent(event) ? " is-urgent" : ""}">
-        <span class="mobile-label">截止时间</span>
+        <span class="mobile-label">${isInterviewEvent(event) ? "确认截止" : "截止时间"}</span>
         <strong>${escapeHtml(deadline || "—")}</strong>
         <span class="sub">${escapeHtml(deadlineHint(event))}</span>
       </span>
@@ -1235,7 +1329,7 @@ function renderLibraryRow(event) {
       <span class="library-chevron">${icon("chevronRight", 16)}</span>
     </button>
     <div class="library-row-actions">
-      ${url ? `<a class="quick-action keep-mobile" href="${escapeHtml(url)}" target="_blank" rel="noopener noreferrer" title="打开考试入口" aria-label="打开考试入口">${icon("external", 14)}</a>` : ""}
+      ${url ? `<a class="quick-action keep-mobile" href="${escapeHtml(url)}" target="_blank" rel="noopener noreferrer" title="打开${eventLinkLabel(event)}" aria-label="打开${eventLinkLabel(event)}">${icon("external", 14)}</a>` : ""}
       <button class="quick-action keep-mobile${isDone ? " is-done" : ""}" type="button" data-action="toggle-done" data-id="${event.id}" title="${isDone ? "标记为待参加" : "标记为已完成"}" aria-label="${isDone ? "标记为待参加" : "标记为已完成"}">${icon("check", 14)}</button>
     </div>
   </article>`;
@@ -1260,7 +1354,7 @@ function renderAccounts() {
     ${viewHeader({
       eyebrow: "CONNECT · MAILBOXES",
       title: "把招聘邮箱，接进来。",
-      subtitle: "只读扫描最近邮件。笔试雷达不会发送、删除或修改你的邮件，授权码只加密保存在本机。",
+      subtitle: "只读扫描最近邮件。校招雷达不会发送、删除或修改你的邮件，授权码只加密保存在本机。",
       actions: headerActions({ refresh: true, connect: true }),
       withDemo: false,
     })}
@@ -1285,7 +1379,7 @@ function renderAccounts() {
           <h3>同步时会发生什么</h3>
           <div class="explainer-list">
             <div class="explainer-row"><span class="explainer-num">01</span><p><strong>只读访问。</strong>不标记已读、不发送、不删除你的邮件。</p></div>
-            <div class="explainer-row"><span class="explainer-num">02</span><p><strong>本地识别。</strong>只保留笔试相关邮件正文，解析过程默认不经过任何云端模型。</p></div>
+            <div class="explainer-row"><span class="explainer-num">02</span><p><strong>本地识别。</strong>只保留笔试或面试相关邮件正文，解析过程默认不经过任何云端模型。</p></div>
             <div class="explainer-row"><span class="explainer-num">03</span><p><strong>增量同步。</strong>按邮件 UID 检查新内容，提醒邮件会合并，手动修改过的字段不会被覆盖。</p></div>
           </div>
         </section>` : ""}
@@ -1331,7 +1425,8 @@ function renderAccountCard(account) {
     <div class="account-toolbar">
       ${isSyncing
         ? `<span class="live-indicator">正在读取最近 ${account.sync_days} 天邮件</span>`
-        : `<button class="button button-ghost button-small" type="button" data-action="sync-account" data-id="${account.id}">${icon("refresh", 13)}${account.last_sync_status === "error" ? "重试同步" : "立即同步"}</button>`}
+        : `<button class="button button-ghost button-small" type="button" data-action="sync-account" data-id="${account.id}">${icon("refresh", 13)}${account.last_sync_status === "error" ? "重试同步" : "立即同步"}</button>
+           <button class="button button-ghost button-small" type="button" data-action="rescan-account" data-id="${account.id}" title="重新检查此前跳过的邮件，补识别面试邀请">${icon("search", 13)}重新识别</button>`}
       <label class="account-auto-sync">
         <span class="switch">
           <input type="checkbox" data-autosync-account="${account.id}" ${account.auto_sync ? "checked" : ""} ${isSyncing ? "disabled" : ""}>
@@ -1472,6 +1567,8 @@ function blankEvent() {
   return {
     id: null,
     account_id: null,
+    kind: "exam",
+    interview_round: "",
     company: "",
     role: "",
     exam_start: null,
@@ -1576,7 +1673,7 @@ async function openEventDrawer(id = null, { create = false } = {}) {
   } catch (error) {
     if (!state.drawer || state.drawer.token !== token) return;
     state.drawer.loading = false;
-    state.drawer.error = error.message || "读取笔试详情失败";
+    state.drawer.error = error.message || "读取记录失败";
     renderDrawer();
   }
 }
@@ -1607,17 +1704,23 @@ function focusDrawer() {
 }
 
 function drawerHeaderMarkup(event, mode, loading, error) {
+  const kind = eventKind(event);
   const title = error
     ? "读取失败"
-    : (mode === "create" ? "新的笔试" : (event?.company || "笔试详情"));
+    : (mode === "create" ? `新的${KIND_LABELS[kind]}` : (event?.company || `${KIND_LABELS[kind]}详情`));
   const role = error
     ? "请关闭后重试"
     : (loading ? "正在读取邮件记录…" : (mode === "create" ? "手动补一条记录" : (event?.role || "岗位未注明")));
+  const kicker = mode === "create"
+    ? "MANUAL ENTRY · 手动添加"
+    : (event?.is_demo
+      ? "DEMO · 示例记录"
+      : (kind === "interview" ? "INTERVIEW DETAIL · 面试详情" : "EXAM DETAIL · 笔试详情"));
   return `<div class="drawer-header">
     <div class="drawer-heading">
-      <div class="drawer-kicker">${mode === "create" ? "MANUAL ENTRY · 手动添加" : (event?.is_demo ? "DEMO · 示例记录" : "EXAM DETAIL · 笔试详情")}</div>
+      <div class="drawer-kicker" data-kind-kicker>${kicker}</div>
       <div class="drawer-title-row">
-        <h2 class="drawer-title" id="drawer-title">${escapeHtml(title)}</h2>
+        <h2 class="drawer-title" id="drawer-title" data-kind-title>${escapeHtml(title)}</h2>
       </div>
       <p class="drawer-role">${escapeHtml(role)}</p>
     </div>
@@ -1663,6 +1766,8 @@ function renderDrawer() {
   }
 
   if (!event) return;
+  const kind = eventKind(event);
+  const interview = kind === "interview";
   const status = statusInfo(event);
   const examDate = dateInputValue(event.exam_start);
   const examStart = timeInputValue(event.exam_start, event.exam_time_known);
@@ -1676,13 +1781,15 @@ function renderDrawer() {
   const sourceMeta = [event.source_sender, event.source_received_at ? formatMailTimestamp(event.source_received_at) : ""].filter(Boolean).join(" · ");
   const sourceCount = Number(event.source_count || 1);
   const badges = [
+    kindBadge(event),
     `<span class="status-chip ${status.className}">${escapeHtml(status.label)}</span>`,
+    event.interview_round ? `<span class="tag">${escapeHtml(event.interview_round)}</span>` : "",
     event.platform ? `<span class="tag is-platform">${icon("monitor", 12)}${escapeHtml(event.platform)}</span>` : "",
     modeLabel(event.mode) ? `<span class="tag">${escapeHtml(modeLabel(event.mode))}</span>` : "",
-    event.access_code ? `<span class="tag is-code">口令 ${escapeHtml(event.access_code)}</span>` : "",
+    event.access_code ? `<span class="tag is-code">${interview ? "会议信息" : "口令"} ${escapeHtml(event.access_code)}</span>` : "",
     event.is_demo ? `<span class="tag">示例数据</span>` : "",
     sourceCount > 1 ? `<span class="tag">合并 ${sourceCount} 封邮件</span>` : "",
-    url ? `<a class="tag" href="${escapeHtml(url)}" target="_blank" rel="noopener noreferrer">${icon("external", 11)}打开考试入口</a>` : "",
+    url ? `<a class="tag" href="${escapeHtml(url)}" target="_blank" rel="noopener noreferrer">${icon("external", 11)}打开${eventLinkLabel(event)}</a>` : "",
   ].filter(Boolean).join("");
 
   const footerLeft = mode === "edit"
@@ -1705,6 +1812,19 @@ function renderDrawer() {
             </div>
             <div class="form-grid">
               <div class="form-field">
+                <label class="field-label" for="event-kind">记录类型</label>
+                <select class="select" id="event-kind" name="kind">
+                  <option value="exam" ${kind === "exam" ? "selected" : ""}>笔试 / 测评</option>
+                  <option value="interview" ${kind === "interview" ? "selected" : ""}>面试</option>
+                </select>
+              </div>
+              <div class="form-field" data-interview-round-field ${interview ? "" : "hidden"}>
+                <label class="field-label" for="event-round">面试轮次</label>
+                <input class="input" id="event-round" name="interview_round" type="text" value="${escapeHtml(event.interview_round || "")}" placeholder="一面 / 二面 / HR 面" maxlength="20">
+              </div>
+            </div>
+            <div class="form-grid">
+              <div class="form-field">
                 <label class="field-label" for="event-company">公司<span class="required">*</span></label>
                 <input class="input" id="event-company" name="company" type="text" value="${escapeHtml(event.company || "")}" placeholder="例如：字节跳动" maxlength="100" required>
               </div>
@@ -1717,12 +1837,12 @@ function renderDrawer() {
 
           <section class="drawer-section">
             <div class="drawer-section-head">
-              <h3 class="drawer-section-title">考试时间</h3>
+              <h3 class="drawer-section-title" data-kind-label-exam="考试时间" data-kind-label-interview="面试时间">${interview ? "面试时间" : "考试时间"}</h3>
               <span class="drawer-section-note">只填日期时会标记为时间待确认</span>
             </div>
             <div class="form-grid is-3">
               <div class="form-field">
-                <label class="field-label" for="event-exam-date">考试日期</label>
+                <label class="field-label" for="event-exam-date" data-kind-label-exam="考试日期" data-kind-label-interview="面试日期">${interview ? "面试日期" : "考试日期"}</label>
                 <input class="input" id="event-exam-date" name="exam_date" type="date" value="${examDate}">
               </div>
               <div class="form-field">
@@ -1736,32 +1856,32 @@ function renderDrawer() {
             </div>
             <div class="form-grid is-3">
               <div class="form-field">
-                <label class="field-label" for="event-deadline-date">截止日期</label>
+                <label class="field-label" for="event-deadline-date" data-kind-label-exam="截止日期" data-kind-label-interview="确认截止日期">${interview ? "确认截止日期" : "截止日期"}</label>
                 <input class="input" id="event-deadline-date" name="deadline_date" type="date" value="${deadlineDate}">
               </div>
               <div class="form-field">
-                <label class="field-label" for="event-deadline-time">截止时间</label>
+                <label class="field-label" for="event-deadline-time" data-kind-label-exam="截止时间" data-kind-label-interview="确认截止时间">${interview ? "确认截止时间" : "截止时间"}</label>
                 <input class="input" id="event-deadline-time" name="deadline_time" type="time" value="${deadlineTime}">
               </div>
               <div class="form-field">
-                <label class="field-label" for="event-duration">作答时长<span class="field-suffix">分钟</span></label>
-                <input class="input" id="event-duration" name="duration_minutes" type="number" min="1" max="1440" value="${event.duration_minutes ?? ""}" placeholder="例如 120">
+                <label class="field-label" for="event-duration"><span data-kind-label-exam="作答时长" data-kind-label-interview="面试时长">${interview ? "面试时长" : "作答时长"}</span><span class="field-suffix">分钟</span></label>
+                <input class="input" id="event-duration" name="duration_minutes" type="number" min="1" max="1440" value="${event.duration_minutes ?? ""}" placeholder="${interview ? "例如 45" : "例如 120"}">
               </div>
             </div>
           </section>
 
           <section class="drawer-section">
             <div class="drawer-section-head">
-              <h3 class="drawer-section-title">考试入口</h3>
-              <span class="drawer-section-note">链接和口令仅保存在本机</span>
+              <h3 class="drawer-section-title" data-kind-label-exam="考试入口" data-kind-label-interview="面试入口">${interview ? "面试入口" : "考试入口"}</h3>
+              <span class="drawer-section-note">链接和会议信息仅保存在本机</span>
             </div>
             <div class="form-grid is-3">
               <div class="form-field">
-                <label class="field-label" for="event-platform">考试平台</label>
-                <input class="input" id="event-platform" name="platform" type="text" value="${escapeHtml(event.platform || "")}" placeholder="牛客 / 赛码 / HackerRank" maxlength="100">
+                <label class="field-label" for="event-platform" data-kind-label-exam="考试平台" data-kind-label-interview="面试平台">${interview ? "面试平台" : "考试平台"}</label>
+                <input class="input" id="event-platform" name="platform" type="text" value="${escapeHtml(event.platform || "")}" placeholder="${interview ? "腾讯会议 / Zoom / 飞书" : "牛客 / 赛码 / HackerRank"}" data-kind-placeholder-exam="牛客 / 赛码 / HackerRank" data-kind-placeholder-interview="腾讯会议 / Zoom / 飞书" maxlength="100">
               </div>
               <div class="form-field">
-                <label class="field-label" for="event-mode">考试形式</label>
+                <label class="field-label" for="event-mode" data-kind-label-exam="考试形式" data-kind-label-interview="面试形式">${interview ? "面试形式" : "考试形式"}</label>
                 <select class="select" id="event-mode" name="mode">
                   <option value="unknown" ${event.mode === "unknown" ? "selected" : ""}>待确认</option>
                   <option value="online" ${event.mode === "online" ? "selected" : ""}>线上</option>
@@ -1769,19 +1889,19 @@ function renderDrawer() {
                 </select>
               </div>
               <div class="form-field">
-                <label class="field-label" for="event-code">考试口令 / 邀请码</label>
-                <input class="input" id="event-code" name="access_code" type="text" value="${escapeHtml(event.access_code || "")}" placeholder="没有可留空" maxlength="80" autocomplete="off">
+                <label class="field-label" for="event-code" data-kind-label-exam="考试口令 / 邀请码" data-kind-label-interview="会议号 / 密码">${interview ? "会议号 / 密码" : "考试口令 / 邀请码"}</label>
+                <input class="input" id="event-code" name="access_code" type="text" value="${escapeHtml(event.access_code || "")}" placeholder="${interview ? "会议号、入会密码" : "没有可留空"}" data-kind-placeholder-exam="没有可留空" data-kind-placeholder-interview="会议号、入会密码" maxlength="80" autocomplete="off">
               </div>
             </div>
             <div class="form-grid">
               <div class="form-field is-full">
-                <label class="field-label" for="event-url">考试链接</label>
+                <label class="field-label" for="event-url" data-kind-label-exam="考试链接" data-kind-label-interview="面试链接">${interview ? "面试链接" : "考试链接"}</label>
                 <input class="input" id="event-url" name="exam_url" type="url" value="${escapeHtml(event.exam_url || "")}" placeholder="https://...">
-                <p class="field-help">只接受 http/https 链接。保存后，看板上会出现“考试入口”。</p>
+                <p class="field-help" data-kind-label-exam="只接受 http/https 链接。保存后，看板上会出现“考试入口”。" data-kind-label-interview="只接受 http/https 链接。保存后，看板上会出现“面试入口”。">${interview ? "只接受 http/https 链接。保存后，看板上会出现“面试入口”。" : "只接受 http/https 链接。保存后，看板上会出现“考试入口”。"}</p>
               </div>
               <div class="form-field is-full">
-                <label class="field-label" for="event-location">考试地点</label>
-                <input class="input" id="event-location" name="location" type="text" value="${escapeHtml(event.location || "")}" placeholder="线下考试时填写考点或地址" maxlength="200">
+                <label class="field-label" for="event-location" data-kind-label-exam="考试地点" data-kind-label-interview="面试地点">${interview ? "面试地点" : "考试地点"}</label>
+                <input class="input" id="event-location" name="location" type="text" value="${escapeHtml(event.location || "")}" placeholder="${interview ? "线下面试时填写地址" : "线下考试时填写考点或地址"}" data-kind-placeholder-exam="线下考试时填写考点或地址" data-kind-placeholder-interview="线下面试时填写地址" maxlength="200">
               </div>
             </div>
           </section>
@@ -1841,9 +1961,38 @@ function renderDrawer() {
       ${footerLeft}
       <div class="drawer-footer-actions">
         <button class="button button-ghost" type="button" data-action="close-drawer">取消</button>
-        <button class="button button-primary" type="submit" form="event-form" data-submit-event>${mode === "create" ? "添加笔试" : "保存修改"}</button>
+        <button class="button button-primary" type="submit" form="event-form" data-submit-event>${mode === "create" ? `添加${KIND_LABELS[kind]}` : "保存修改"}</button>
       </div>
     </div>`;
+  applyEventKindUI(kind);
+}
+
+function applyEventKindUI(kind) {
+  const interview = kind === "interview";
+  document.querySelectorAll("[data-kind-label-exam]").forEach((node) => {
+    const value = interview ? node.dataset.kindLabelInterview : node.dataset.kindLabelExam;
+    if (value) node.textContent = value;
+  });
+  document.querySelectorAll("[data-kind-placeholder-exam]").forEach((node) => {
+    const value = interview ? node.dataset.kindPlaceholderInterview : node.dataset.kindPlaceholderExam;
+    if (value) node.setAttribute("placeholder", value);
+  });
+  const roundField = document.querySelector("[data-interview-round-field]");
+  if (roundField) roundField.hidden = !interview;
+  if (state.drawer?.mode === "create") {
+    const title = document.querySelector("[data-kind-title]");
+    if (title) title.textContent = `新的${KIND_LABELS[kind]}`;
+    const submit = document.querySelector("[data-submit-event]");
+    if (submit) submit.textContent = `添加${KIND_LABELS[kind]}`;
+  } else if (state.drawer?.event && !state.drawer.event.is_demo) {
+    const kicker = document.querySelector("[data-kind-kicker]");
+    if (kicker) {
+      kicker.textContent = interview
+        ? "INTERVIEW DETAIL · 面试详情"
+        : "EXAM DETAIL · 笔试详情";
+    }
+  }
+  if (state.drawer?.event) state.drawer.event.kind = kind;
 }
 
 // ---------------------------------------------------------------------------
@@ -1955,12 +2104,21 @@ async function pollSync() {
         showToast(`同步失败：${failed[0].last_sync_error || "请检查邮箱设置"}`, "error");
       } else {
         const created = accounts.reduce((sum, account) => sum + Number(account.last_sync_counts?.created || 0), 0);
+        const createdExams = accounts.reduce((sum, account) => sum + Number(account.last_sync_counts?.created_exams || 0), 0);
+        const createdInterviews = accounts.reduce((sum, account) => sum + Number(account.last_sync_counts?.created_interviews || 0), 0);
         const merged = accounts.reduce((sum, account) => sum + Number(account.last_sync_counts?.merged || 0), 0);
+        const reclassified = accounts.reduce((sum, account) => sum + Number(account.last_sync_counts?.reclassified || 0), 0);
         const scanned = accounts.reduce((sum, account) => sum + Number(account.last_sync_counts?.scanned || 0), 0);
-        if (created || merged) {
-          showToast(`同步完成，新增 ${created} 场${merged ? `，合并 ${merged} 条提醒` : ""}`, "success");
+        const parts = [];
+        if (created) {
+          parts.push(createdBreakdown({ created, created_exams: createdExams, created_interviews: createdInterviews }) || `新增 ${created} 场`);
+        }
+        if (reclassified) parts.push(`重新识别 ${reclassified} 条`);
+        if (merged) parts.push(`合并 ${merged} 条提醒`);
+        if (parts.length) {
+          showToast(`同步完成，${parts.join("，")}`, "success");
         } else if (scanned) {
-          showToast(`检查了 ${scanned} 封新邮件，没有发现新的笔试`, "info");
+          showToast(`检查了 ${scanned} 封新邮件，没有发现新的笔试或面试`, "info");
         } else {
           showToast("同步完成，没有需要检查的新邮件", "info");
         }
@@ -2017,6 +2175,31 @@ async function triggerAccountSync(accountId) {
   }
 }
 
+async function triggerAccountRescan(accountId) {
+  const account = state.accounts.find((item) => item.id === Number(accountId));
+  if (!account) return;
+  const confirmed = await showConfirm({
+    title: "重新识别最近的邮件？",
+    message: `会重新读取 ${account.email} 当前同步范围内的邮件，补识别此前忽略的面试邀请。\n已有记录不会重复生成，手动修改过的内容不会被覆盖。`,
+    confirmLabel: "开始重新识别",
+    danger: false,
+    iconName: "search",
+  });
+  if (!confirmed) return;
+  try {
+    await api(`/api/accounts/${accountId}/rescan`, { method: "POST" });
+    state.syncNotice = true;
+    state.syncFailures = 0;
+    await refreshAccountsOnly();
+    if (state.view === "accounts") renderCurrentView();
+    else updateSidebar();
+    startSyncPolling();
+    showToast("已开始重新识别，完成后会自动刷新", "info");
+  } catch (error) {
+    showToast(error.message, "error");
+  }
+}
+
 // ---------------------------------------------------------------------------
 // Event actions
 // ---------------------------------------------------------------------------
@@ -2057,7 +2240,7 @@ async function deleteEventPermanently(eventId) {
   const event = state.drawer?.event || state.events.find((item) => item.id === Number(eventId));
   if (!event) return;
   const confirmed = await showConfirm({
-    title: "删除这条笔试记录？",
+    title: "删除这条日程记录？",
     message: `${displayCompany(event)} · ${displayRole(event)}\n删除后无法恢复，但不会影响原始邮件。`,
     confirmLabel: "删除记录",
     danger: true,
@@ -2080,6 +2263,8 @@ async function submitEventForm(form) {
   const submitButton = el.drawer.querySelector("[data-submit-event]");
   setFormError(form, "");
   const data = new FormData(form);
+  const kind = String(data.get("kind") || "exam") === "interview" ? "interview" : "exam";
+  const interviewRound = kind === "interview" ? String(data.get("interview_round") || "").trim() : "";
   const company = String(data.get("company") || "").trim();
   const examDate = String(data.get("exam_date") || "").trim();
   const examStartTime = String(data.get("exam_start_time") || "").trim();
@@ -2093,7 +2278,7 @@ async function submitEventForm(form) {
     return;
   }
   if (!examDate && (examStartTime || examEndTime)) {
-    setFormError(form, "填写考试时间前，请先选择考试日期。");
+    setFormError(form, `填写${kind === "interview" ? "面试" : "考试"}时间前，请先选择日期。`);
     form.querySelector("#event-exam-date")?.focus();
     return;
   }
@@ -2127,13 +2312,15 @@ async function submitEventForm(form) {
   }
   const examUrlRaw = String(data.get("exam_url") || "").trim();
   if (examUrlRaw && !safeHttpUrl(examUrlRaw)) {
-    setFormError(form, "考试链接需要以 http:// 或 https:// 开头。");
+    setFormError(form, "链接需要以 http:// 或 https:// 开头。");
     form.querySelector("#event-url")?.focus();
     return;
   }
 
   const rawDuration = String(data.get("duration_minutes") || "").trim();
   const payload = {
+    kind,
+    interview_round: interviewRound || null,
     company,
     role: String(data.get("role") || "").trim(),
     exam_start: examStart,
@@ -2161,7 +2348,7 @@ async function submitEventForm(form) {
     }
     closeDrawer({ restoreFocus: false });
     await refreshData();
-    showToast(mode === "create" ? "笔试已添加" : "修改已保存", "success");
+    showToast(mode === "create" ? `${KIND_LABELS[kind]}已添加` : "修改已保存", "success");
   } catch (error) {
     if (state.drawer) state.drawer.saving = false;
     setFormError(form, error.message);
@@ -2293,7 +2480,7 @@ async function deleteAccountWithConfirm(accountId) {
   const related = state.events.filter((event) => event.account_id === account.id).length;
   const confirmed = await showConfirm({
     title: "移除这个邮箱？",
-    message: `将断开 ${account.email} 的连接${related ? `，并删除由它同步的 ${related} 条笔试记录` : ""}。\n此操作无法撤销，但不会删除邮箱里的原始邮件。`,
+    message: `将断开 ${account.email} 的连接${related ? `，并删除由它同步的 ${related} 条日程记录` : ""}。\n此操作无法撤销，但不会删除邮箱里的原始邮件。`,
     confirmLabel: "移除邮箱",
     danger: true,
     iconName: "trash",
@@ -2377,6 +2564,14 @@ function handleDocumentClick(event) {
     return;
   }
 
+  const kindTarget = target.closest("[data-kind-filter]");
+  if (kindTarget) {
+    event.preventDefault();
+    state.kindFilter = kindTarget.dataset.kindFilter;
+    updateLibraryKindUI();
+    return;
+  }
+
   const filterTarget = target.closest("[data-filter]");
   if (filterTarget) {
     event.preventDefault();
@@ -2411,6 +2606,9 @@ function handleDocumentClick(event) {
       break;
     case "sync-account":
       if (id) triggerAccountSync(Number(id));
+      break;
+    case "rescan-account":
+      if (id) triggerAccountRescan(Number(id));
       break;
     case "open-event":
       if (id) openEventDrawer(Number(id));
@@ -2508,6 +2706,11 @@ function handleDocumentInput(event) {
 
 function handleDocumentChange(event) {
   const target = event.target;
+  if (!(target instanceof HTMLInputElement) && !(target instanceof HTMLSelectElement)) return;
+  if (target.id === "event-kind" && target instanceof HTMLSelectElement) {
+    applyEventKindUI(target.value);
+    return;
+  }
   if (!(target instanceof HTMLInputElement)) return;
   if (target.name === "provider" && target.type === "radio") {
     updateProviderUI(target.value);

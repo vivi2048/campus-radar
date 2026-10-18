@@ -38,7 +38,7 @@ def main() -> None:
     url = f"http://{display_host}:{settings.port}"
 
     print("", flush=True)
-    print(f"  exam-radar v{APP_VERSION}", flush=True)
+    print(f"  campus-radar v{APP_VERSION}", flush=True)
     print(f"  看板地址  {url}", flush=True)
     print(f"  数据目录  {settings.data_dir}", flush=True)
     print("  停止服务  Ctrl+C", flush=True)

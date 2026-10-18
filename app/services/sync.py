@@ -19,6 +19,7 @@ from .events import find_duplicate_event, merge_into_event
 
 MAX_EMAIL_BYTES = 10 * 1024 * 1024
 RESCHEDULE_RE = re.compile(r"变更|调整|改期|更新|延期|更改", re.IGNORECASE)
+RESCANNABLE_OUTCOMES = {"not_exam", "not_event", "error"}
 
 SessionFactory = Callable[[MailAccount], MailboxSession]
 
@@ -56,7 +57,7 @@ class SyncService:
         )
         return SyncResult(success=False, error=message)
 
-    def sync_account(self, account_id: int) -> SyncResult:
+    def sync_account(self, account_id: int, *, rescan: bool = False) -> SyncResult:
         row = self.db.fetch_one("SELECT * FROM accounts WHERE id = ?", (account_id,))
         if not row:
             return SyncResult(success=False, error="邮箱账号不存在")
@@ -65,6 +66,9 @@ class SyncService:
             "scanned": 0,
             "matched": 0,
             "created": 0,
+            "created_exams": 0,
+            "created_interviews": 0,
+            "reclassified": 0,
             "merged": 0,
             "skipped": 0,
             "errors": 0,
@@ -94,8 +98,8 @@ class SyncService:
             with self.session_factory(mail_account) as session:
                 search = session.search(
                     since=since,
-                    last_uid=int(row.get("last_uid") or 0),
-                    known_uidvalidity=row.get("uidvalidity"),
+                    last_uid=0 if rescan else int(row.get("last_uid") or 0),
+                    known_uidvalidity=None if rescan else row.get("uidvalidity"),
                     limit=int(row.get("max_messages") or 300),
                 )
                 next_uid = max(next_uid, search.top_uid)
@@ -114,14 +118,21 @@ class SyncService:
                     try:
                         parsed = parse_raw_email(raw, fallback_received_at=datetime.now(timezone.utc))
                         message_key = make_message_key(parsed, raw)
-                        if self._was_seen(account_id, message_key):
+                        seen = self._seen_row(account_id, message_key)
+                        reprocess = bool(
+                            seen
+                            and rescan
+                            and seen.get("event_id") is None
+                            and seen.get("outcome") in RESCANNABLE_OUTCOMES
+                        )
+                        if seen and not reprocess:
                             counts["skipped"] += 1
                             continue
                         counts["scanned"] += 1
                         analysis = analyze_email(parsed)
                         if not analysis.accepted or not analysis.fields or not analysis.timing:
                             counts["skipped"] += 1
-                            self._record_seen(account_id, message_key, "not_exam", None)
+                            self._record_seen(account_id, message_key, "not_event", None)
                             continue
                         counts["matched"] += 1
                         new_values = self._event_values(account_id, parsed, analysis)
@@ -134,6 +145,8 @@ class SyncService:
                             exam_start=new_values["exam_start"],
                             exam_url=new_values["exam_url"],
                             reschedule=reschedule,
+                            kind=new_values["kind"],
+                            interview_round=new_values["interview_round"],
                         )
                         if existing:
                             merge_into_event(
@@ -151,7 +164,13 @@ class SyncService:
                         else:
                             event_id = self._insert_event(new_values)
                             counts["created"] += 1
+                            if new_values["kind"] == "interview":
+                                counts["created_interviews"] += 1
+                            else:
+                                counts["created_exams"] += 1
                             self._record_seen(account_id, message_key, "created", event_id)
+                        if seen:
+                            counts["reclassified"] += 1
                     except Exception:
                         counts["errors"] += 1
                         self.logger.exception("Failed to process one email for account %s", account_id)
@@ -187,22 +206,25 @@ class SyncService:
             ),
         )
         self.logger.info(
-            "Sync account %s complete: scanned=%s matched=%s created=%s merged=%s errors=%s",
+            "Sync account %s complete: scanned=%s matched=%s created=%s"
+            " (exam=%s interview=%s) merged=%s reclassified=%s errors=%s",
             account_id,
             counts["scanned"],
             counts["matched"],
             counts["created"],
+            counts["created_exams"],
+            counts["created_interviews"],
             counts["merged"],
+            counts["reclassified"],
             counts["errors"],
         )
         return SyncResult(success=True, counts=counts)
 
-    def _was_seen(self, account_id: int, message_key: str) -> bool:
-        row = self.db.fetch_one(
-            "SELECT 1 FROM seen_messages WHERE account_id = ? AND message_key = ?",
+    def _seen_row(self, account_id: int, message_key: str) -> dict[str, Any] | None:
+        return self.db.fetch_one(
+            "SELECT outcome, event_id FROM seen_messages WHERE account_id = ? AND message_key = ?",
             (account_id, message_key),
         )
-        return row is not None
 
     def _record_seen(
         self, account_id: int, message_key: str, outcome: str, event_id: int | None
@@ -225,6 +247,8 @@ class SyncService:
         timing = analysis.timing
         return {
             "account_id": account_id,
+            "kind": analysis.kind or "exam",
+            "interview_round": fields.interview_round or "",
             "company": fields.company,
             "role": fields.role,
             "exam_start": timing.exam_start,
@@ -257,17 +281,19 @@ class SyncService:
         return self.db.execute(
             """
             INSERT INTO events (
-                account_id, company, role, exam_start, exam_end, exam_time_known,
+                account_id, kind, interview_round, company, role, exam_start, exam_end, exam_time_known,
                 deadline, deadline_time_known, duration_minutes, platform, exam_url,
                 mode, location, access_code, status, ignored, needs_review,
                 manually_edited, auto_notes, notes, source_subject, source_sender,
                 source_received_at, source_body, source_count, is_demo,
                 created_at, updated_at
             ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?,
-                      ?, ?, ?, ?, ?, ?, ?, ?)
+                      ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             """,
             (
                 values["account_id"],
+                values["kind"],
+                values["interview_round"],
                 values["company"],
                 values["role"],
                 values["exam_start"],
@@ -315,7 +341,7 @@ class SyncManager:
         with self._lock:
             return set(self._active)
 
-    def trigger(self, account_id: int, reason: str = "manual") -> bool:
+    def trigger(self, account_id: int, reason: str = "manual", *, rescan: bool = False) -> bool:
         account = self.db.fetch_one("SELECT id FROM accounts WHERE id = ?", (account_id,))
         if not account:
             return False
@@ -332,17 +358,22 @@ class SyncManager:
         )
         thread = threading.Thread(
             target=self._run,
-            args=(account_id, reason),
+            args=(account_id, reason, rescan),
             name=f"mail-sync-{account_id}",
             daemon=True,
         )
         thread.start()
         return True
 
-    def _run(self, account_id: int, reason: str) -> None:
+    def _run(self, account_id: int, reason: str, rescan: bool = False) -> None:
         try:
-            self.logger.info("Starting %s sync for account %s", reason, account_id)
-            result = self.service.sync_account(account_id)
+            self.logger.info(
+                "Starting %s%s sync for account %s",
+                reason,
+                " rescan" if rescan else "",
+                account_id,
+            )
+            result = self.service.sync_account(account_id, rescan=rescan)
             if not result.success:
                 self.logger.warning("Sync failed for account %s: %s", account_id, result.error)
         except Exception:
@@ -372,7 +403,7 @@ class AutoSyncWorker(threading.Thread):
         *,
         interval_minutes: int = 30,
     ) -> None:
-        super().__init__(name="exam-radar-auto-sync", daemon=True)
+        super().__init__(name="campus-radar-auto-sync", daemon=True)
         self.db = db
         self.manager = manager
         self.logger = logger

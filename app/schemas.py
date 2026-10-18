@@ -8,6 +8,8 @@ from pydantic import BaseModel, ConfigDict
 class EventPayload(BaseModel):
     model_config = ConfigDict(extra="ignore")
 
+    kind: str = "exam"
+    interview_round: str | None = None
     company: str = ""
     role: str = ""
     exam_start: str | None = None
@@ -30,6 +32,8 @@ class EventPayload(BaseModel):
 class EventUpdate(BaseModel):
     model_config = ConfigDict(extra="ignore")
 
+    kind: str | None = None
+    interview_round: str | None = None
     company: str | None = None
     role: str | None = None
     exam_start: str | None = None

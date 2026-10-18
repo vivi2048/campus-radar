@@ -1,5 +1,5 @@
 /* ==========================================================================
-   exam-radar — a warm, local-first written-exam dashboard
+   campus-radar — a warm, local-first recruitment dashboard
    ========================================================================== */
 
 :root {
@@ -4594,5 +4594,158 @@ summary:focus-visible {
   .accounts-layout.is-empty .account-column,
   .accounts-layout.is-empty .add-account-column {
     order: initial;
+  }
+}
+
+/* ==========================================================================
+   Exam / interview kind markers and type filter
+   ========================================================================== */
+
+.kind-chip {
+  display: inline-flex;
+  flex: 0 0 auto;
+  align-items: center;
+  min-height: 18px;
+  padding: 1px 7px;
+  border: 1px solid transparent;
+  border-radius: 999px;
+  font-size: 9px;
+  font-weight: 650;
+  letter-spacing: 0.03em;
+  line-height: 1.2;
+  white-space: nowrap;
+}
+
+.kind-chip.is-exam {
+  color: var(--accent-ink);
+  border-color: rgba(237, 101, 50, 0.14);
+  background: var(--accent-soft);
+}
+
+.kind-chip.is-interview {
+  color: var(--blue);
+  border-color: rgba(61, 111, 146, 0.15);
+  background: var(--blue-soft);
+}
+
+.focus-kicker {
+  flex-wrap: wrap;
+}
+
+.focus-kind {
+  display: inline-flex;
+  align-items: center;
+  padding: 2px 7px;
+  border: 1px solid transparent;
+  border-radius: 999px;
+  font-family: var(--font-sans);
+  font-size: 9px;
+  font-weight: 600;
+  letter-spacing: 0.02em;
+  line-height: 1.2;
+  text-transform: none;
+}
+
+.focus-kind.is-exam {
+  color: #f6c9b4;
+  border-color: rgba(237, 101, 50, 0.24);
+  background: rgba(237, 101, 50, 0.16);
+}
+
+.focus-kind.is-interview {
+  color: #c9e0ef;
+  border-color: rgba(135, 181, 211, 0.22);
+  background: rgba(61, 111, 146, 0.26);
+}
+
+.library-toolbar {
+  flex-wrap: wrap;
+}
+
+.library-tools {
+  display: flex;
+  flex: 0 0 auto;
+  align-items: center;
+  gap: 9px;
+  margin-left: auto;
+}
+
+.kind-switch {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  padding: 3px;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  background: var(--surface-muted);
+}
+
+.kind-switch-button {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  min-height: 29px;
+  padding: 0 9px;
+  color: var(--muted);
+  border: 0;
+  border-radius: 7px;
+  background: transparent;
+  font-size: 10.5px;
+  font-weight: 570;
+  cursor: pointer;
+  transition: color 150ms ease, background 150ms ease, box-shadow 150ms ease;
+}
+
+.kind-switch-button:hover {
+  color: var(--ink);
+}
+
+.kind-switch-button.is-active {
+  color: var(--ink);
+  background: var(--surface);
+  box-shadow: 0 0 0 1px var(--line), 0 2px 8px -6px rgba(32, 36, 31, 0.3);
+}
+
+.kind-switch-button[data-kind-filter="exam"].is-active {
+  color: var(--accent-ink);
+}
+
+.kind-switch-button[data-kind-filter="interview"].is-active {
+  color: var(--blue);
+}
+
+.kind-switch-button .filter-count {
+  font-family: var(--font-mono);
+  font-size: 9px;
+}
+
+.library-company-name .kind-chip {
+  margin-left: 1px;
+}
+
+@media (max-width: 760px) {
+  .library-tools {
+    flex-direction: column;
+    align-items: stretch;
+    width: 100%;
+    margin-left: 0;
+  }
+
+  .library-toolbar .filter-tabs {
+    flex-wrap: wrap;
+    overflow-x: visible;
+  }
+
+  .library-toolbar .filter-tab {
+    padding: 0 10px;
+  }
+
+  .kind-switch {
+    justify-content: space-between;
+  }
+
+  .kind-switch-button {
+    flex: 1;
+    justify-content: center;
   }
 }

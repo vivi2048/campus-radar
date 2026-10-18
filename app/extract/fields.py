@@ -5,7 +5,7 @@ import unicodedata
 from dataclasses import dataclass
 
 from ..mail.mime import EmailLink
-from .links import detect_platform, normalize_url, select_exam_link
+from .links import detect_platform, normalize_url, select_exam_link, select_interview_link
 
 GENERIC_COMPANY_RE = re.compile(
     r"校园招聘|春季招聘|秋季招聘|社会招聘|招聘中心|招聘团队|招聘组|招聘助手|招聘"
@@ -15,7 +15,8 @@ GENERIC_COMPANY_RE = re.compile(
     re.IGNORECASE,
 )
 EXAM_NOISE_RE = re.compile(
-    r"(?:笔试|测评|在线考试|线上考试|在线笔试|线上笔试|机考)(?:的)?(?:邀请|通知|提醒|安排|确认|公告|链接)?",
+    r"(?:笔试|测评|在线考试|线上考试|在线笔试|线上笔试|机考)(?:的)?(?:邀请|通知|提醒|安排|确认|公告|链接)?"
+    r"|(?:视频|电话|现场|线上|线下|远程)?(?:初试|复试|面试|面谈|终面|终试)(?:的)?(?:邀请|通知|提醒|安排|确认|公告|邀约)?",
     re.IGNORECASE,
 )
 ROLE_HINT_RE = re.compile(
@@ -39,6 +40,9 @@ ROLE_PATTERNS: tuple[re.Pattern[str], ...] = (
     re.compile(
         r"您(?:投递|申请|应聘)的(?:是)?\s*[「『“\"']?(.{2,50}?)[」』”\"']?\s*(?:岗位|职位)",
     ),
+    re.compile(
+        r"参与\s*([^\n，。；;]{2,40}?)\s*的(?:视频|电话|现场|线上|远程)?(?:面试|初试|复试|终面|面谈)",
+    ),
 )
 COMPANY_LABEL_RE = re.compile(
     r"(?:公司名称|企业名称|所属公司|公司)\s*[:：]\s*([^\n，。；;]{2,45})"
@@ -55,19 +59,48 @@ SUBJECT_COMPANY_PREFIX_RE = re.compile(
     r"^(?:关于|有关)?\s*([\u4e00-\u9fa5A-Za-z0-9·（）()]{2,30}?)"
     r"(?=20\d{2}|校园招聘|校招|秋招|春招|招聘|笔试|测评|在线考试|线上考试)"
 )
-BRACKET_RE = re.compile(r"[【\[]([^】\]]{2,60})[】\]]")
+BRACKET_RE = re.compile(r"[【\[「『]([^】\]」』]{2,60})[】\]」』]")
 ACCESS_CODE_RE = re.compile(
     r"(?:考试口令|测评口令|考试码|考试邀请码|邀请码|Access\s*Code|Test\s*Code|Exam\s*Code)"
     r"\s*[:：]?\s*[「『“\"']?([A-Za-z0-9][A-Za-z0-9_-]{3,24})",
     re.IGNORECASE,
 )
+INTERVIEW_ACCESS_PATTERNS: tuple[tuple[re.Pattern[str], str], ...] = (
+    (
+        re.compile(
+            r"(?:会议号|会议\s*ID|Meeting\s*ID)\s*[:：]?\s*"
+            r"([A-Za-z0-9][A-Za-z0-9 _-]{2,40})",
+            re.IGNORECASE,
+        ),
+        "会议号",
+    ),
+    (
+        re.compile(
+            r"(?:会议密码|入会密码|Meeting\s*Password|Passcode)\s*[:：]?\s*"
+            r"([A-Za-z0-9!@#$%^&*._-]{2,30})",
+            re.IGNORECASE,
+        ),
+        "密码",
+    ),
+)
+INTERVIEW_ROUND_RE = re.compile(
+    r"(?:面试轮次|面试阶段|轮次)\s*[:：]\s*([^\n，。；;]{1,20})"
+    r"|(第[一二三四五六七八九十\d]+轮(?:面试)?)"
+    r"|(?<![A-Za-z统])(HR\s*面|hr\s*面|终面|终试|一面|二面|三面|四面|初面|复面|初试|复试|群面|技术面|专业面|综合面|业务面|主管面|经理面|交叉面|加面)(?=面试|面|试|[\s：:，,、\-—。；;！!]|$)"
+    r"|(?<![A-Za-z])(first|second|third|final|technical|behavioral|HR)\s+round(?:\s+interview)?",
+    re.IGNORECASE,
+)
 LOCATION_RE = re.compile(
-    r"(?:考试地点|笔试地点|测评地点|线下地点|考点|考试地址|地址|地点)\s*[:：]\s*([^\n]{2,80})"
+    r"(?:考试地点|笔试地点|测评地点|面试地点|面试地址|线下地点|考点|考试地址|地址|地点)"
+    r"\s*[:：]\s*([^\n]{2,80})"
 )
 NOTE_CUES_RE = re.compile(
     r"提前\s*\d+\s*分钟|摄像头|麦克风|监控|防作弊|不允许|禁止|计算器|草稿纸|身份证|学生证"
     r"|准考证|浏览器|Chrome|客户端|网络|设备|安静|作答|考试须知|请务必|请确保|请注意"
-    r"|开考后|迟到|切屏|离开|自动保存|电量|充电|环境",
+    r"|开考后|迟到|切屏|离开|自动保存|电量|充电|环境"
+    r"|等候室|入会|会议软件|下载|安装|签到|着装|简历|作品集|到访|到场|身份核验"
+    r"|面试须知|面试流程|camera|microphone|webcam|headphone|waiting\s+room"
+    r"|minutes?\s+early|download|install|on\s+time",
     re.IGNORECASE,
 )
 URL_RE = re.compile(r"https?://\S+", re.IGNORECASE)
@@ -146,6 +179,9 @@ KNOWN_DOMAINS: tuple[tuple[str, str], ...] = (
     ("coca-cola.com", "可口可乐"),
     ("nike.com", "耐克"),
     ("shopee.com", "Shopee"),
+    ("tcl.com", "TCL"),
+    ("tcl.com.cn", "TCL"),
+    ("hundsun.com", "恒生"),
     ("pku.edu.cn", "北京大学"),
     ("tsinghua.edu.cn", "清华大学"),
 )
@@ -173,6 +209,27 @@ PLATFORM_NAMES = {
     "Greenhouse",
     "Oracle Taleo",
     "SAP SuccessFactors",
+    "Zoom",
+    "腾讯会议",
+    "飞书会议",
+    "钉钉会议",
+    "Microsoft Teams",
+    "Google Meet",
+    "Webex",
+    "华为云会议",
+    "牛客面试",
+    "智联",
+    "智联招聘",
+    "iTalent",
+    "北森",
+    "牛客",
+    "牛客网",
+    "赛码",
+    "赛码网",
+    "猎聘",
+    "BOSS直聘",
+    "前程无忧",
+    "51job",
 }
 
 GENERIC_MAIL_DOMAINS = {
@@ -201,6 +258,7 @@ class ExtractedFields:
     location: str | None
     access_code: str | None
     auto_notes: str | None
+    interview_round: str | None = None
 
 
 def _nfkc(text: str) -> str:
@@ -220,6 +278,8 @@ def _trim_company(value: str) -> str:
             break
         value = cleaned
     value = re.sub(r"\s*(?:的|校园招聘|校招)$", "", value)
+    value = re.sub(r"(?:项目组|项目团队|招聘项目组)$", "", value)
+    value = re.sub(r"\s*[|｜]\s*", " / ", value)
     value = value.strip(" \t\r\n【】[]（）()<>《》「」『』“”\"'·-—_|｜,，.。:：;；")
     value = re.sub(r"\s{2,}", " ", value)
     return value[:45]
@@ -233,8 +293,8 @@ def valid_company(value: str) -> bool:
     if value in PLATFORM_NAMES:
         return False
     if re.fullmatch(
-        r"在线|线上|线下|远程|笔试|测评|考试|邀请|通知|提醒|安排|确认|校招|秋招|春招"
-        r"|校园|招聘|同学|您好|你好|测评通知|笔试通知|考试通知|开始|参加|进行|重要",
+        r"在线|线上|线下|远程|笔试|测评|考试|面试|面谈|邀请|通知|提醒|安排|确认|校招|秋招|春招"
+        r"|校园|招聘|同学|您好|你好|测评通知|笔试通知|考试通知|面试通知|面试邀请|面试安排|开始|参加|进行|重要",
         value,
         re.IGNORECASE,
     ):
@@ -251,7 +311,7 @@ def valid_company(value: str) -> bool:
         value,
     ):
         return False
-    if re.search(r"岗位|职位|笔试|测评|考试|邀请|通知|提醒|同学|您好|你好", value):
+    if re.search(r"岗位|职位|笔试|测评|考试|面试|面谈|邀请|通知|提醒|同学|您好|你好", value):
         return False
     return True
 
@@ -280,7 +340,12 @@ def extract_company(subject: str, body: str, sender_name: str, sender_email: str
 
     sender_clean = _trim_company(sender_name)
     if valid_company(sender_clean):
-        candidates.append((4.2, sender_clean))
+        sender_weight = 4.2 if re.search(
+            r"招聘|HR|人力资源|校园|人才|Recruiting|Talent|Careers?",
+            sender_name,
+            re.IGNORECASE,
+        ) else 2.0
+        candidates.append((sender_weight, sender_clean))
 
     domain_company = _domain_company(sender_email)
     if domain_company:
@@ -315,8 +380,10 @@ def _trim_role(value: str) -> str:
     value = value.strip(" \t\r\n【】[]（）()<>《》「」『』“”\"'·-—_|｜,，.。:：;；")
     value = re.sub(r"^(?:您|你|投递|投递了|申请|申请了|应聘|应聘了|的|岗位|职位|职务)\s*", "", value)
     value = re.sub(r"^(?:笔试|测评|考试)(?:提醒|邀请|通知|安排)?\s*[:：|｜\-—]\s*", "", value)
+    value = re.sub(r"^(?:面试|面谈)(?:提醒|邀请|通知|安排|邀约)?\s*[:：|｜\-—]\s*", "", value)
     value = re.sub(r"^(?:20\d{2}\s*届?|20\d{2}\s*年)\s*(?:秋季|春季|暑期)?\s*(?:校园招聘|校招|提前批|补录)?", "", value)
     value = re.sub(r"(?:的)?(?:笔试|测评|在线考试|线上考试)(?:邀请|通知|提醒|安排)?$", "", value)
+    value = re.sub(r"(?:的)?(?:面试|面谈)(?:邀请|通知|提醒|安排|邀约)?$", "", value)
     value = re.sub(r"(?:岗位|职位|职务)$", "", value)
     value = value.strip(" \t\r\n【】[]（）()<>《》「」『』“”\"'·-—_|｜,，.。:：;；")
     value = re.sub(r"\s{2,}", " ", value)
@@ -332,6 +399,8 @@ def _postprocess_role(value: str, company: str) -> str:
         elif value.startswith(company):
             value = _trim_role(value[len(company) :])
     value = re.sub(r"^(?:在线|线上|线下)?(?:笔试|测评|考试)(?:提醒|邀请|通知|安排)?\s*[:：]?\s*", "", value)
+    value = re.sub(r"^(?:在线|线上|线下|视频|电话|现场)?(?:面试|面谈)(?:提醒|邀请|通知|安排|邀约)?\s*[:：]?\s*", "", value)
+    value = re.sub(r"^(?:一面|二面|三面|终面|初面|复面|初试|复试|HR\s*面)\s*[-—–|｜·]\s*", "", value, flags=re.IGNORECASE)
     match = re.match(
         r"^(.{1,55}?(?:工程师|专员|经理|设计师|分析师|研究员|顾问|管培生|培训生|架构师"
         r"|科学家|实习生|开发者|岗(?:位)?))",
@@ -347,7 +416,7 @@ def valid_role(value: str) -> bool:
         return False
     if not ROLE_HINT_RE.search(value) and not re.search(r"岗(?:位)?$", value):
         return False
-    if re.search(r"笔试邀请|测评邀请|考试通知|校园招聘$|招聘团队$", value):
+    if re.search(r"笔试邀请|测评邀请|考试通知|面试邀请|面试通知|面试安排|校园招聘$|招聘团队$", value):
         return False
     if len(value) > 50:
         return False
@@ -404,7 +473,7 @@ def extract_location(body: str) -> str | None:
     for match in LOCATION_RE.finditer(body):
         location = match.group(1).strip()
         location = re.sub(r"\s+", " ", location)
-        location = re.split(r"(?:考试时间|笔试时间|入场时间|交通|联系|电话)", location)[0].strip(" ：:，,。；;")
+        location = re.split(r"(?:考试时间|笔试时间|面试时间|面谈时间|入场时间|面试形式|交通|联系|电话)", location)[0].strip(" ：:，,。；;")
         if not location or location in {"线上", "在线", "见邮件", "另行通知", "待定"}:
             continue
         if re.fullmatch(r"https?://\S+", location):
@@ -413,9 +482,19 @@ def extract_location(body: str) -> str | None:
     return None
 
 
-def _mode_and_location(body: str, url: str | None, platform: str | None) -> tuple[str, str | None]:
-    online_cue = bool(re.search(r"线上|在线|远程|居家|网络笔试|online", body, re.I))
-    offline_cue = bool(re.search(r"线下|现场笔试|现场考试|考点|考场|莅临", body, re.I))
+def _mode_and_location(
+    body: str, url: str | None, platform: str | None, kind: str = "exam"
+) -> tuple[str, str | None]:
+    if kind == "interview":
+        online_cue = bool(
+            re.search(r"线上|在线|远程|居家|视频面试|电话面试|视频面|电话面|视频|电话|online|video|phone", body, re.I)
+        )
+        offline_cue = bool(
+            re.search(r"线下|现场面试|现场面|到访|莅临|公司面试|面试地点|面试地址|onsite", body, re.I)
+        )
+    else:
+        online_cue = bool(re.search(r"线上|在线|远程|居家|网络笔试|online", body, re.I))
+        offline_cue = bool(re.search(r"线下|现场笔试|现场考试|考点|考场|莅临", body, re.I))
     location = extract_location(body)
     if location and re.search(r"线上|在线|远程|居家", location):
         location = None
@@ -443,7 +522,7 @@ def _extract_notes(body: str) -> str | None:
             continue
         if re.search(r"退订|unsubscribe|隐私政策|此邮件由系统", piece, re.I):
             continue
-        if re.search(r"考试口令|测评口令|邀请码|Access\s*Code", piece, re.I):
+        if re.search(r"考试口令|测评口令|邀请码|Access\s*Code|会议号|会议密码|Meeting\s*ID|Passcode", piece, re.I):
             continue
         if piece not in notes:
             notes.append(piece)
@@ -452,21 +531,66 @@ def _extract_notes(body: str) -> str | None:
     return "\n".join(notes) if notes else None
 
 
+def extract_interview_round(subject: str, body: str) -> str | None:
+    text = f"{_nfkc(subject)}\n{_nfkc(body)[:5000]}"
+    for match in INTERVIEW_ROUND_RE.finditer(text):
+        value = next((group for group in match.groups() if group), "").strip()
+        value = re.sub(r"\s+", " ", value).strip(" ：:，,。；;-—")
+        if not value:
+            continue
+        if value.lower() in {"hr面", "hr 面"}:
+            return "HR 面"
+        if re.fullmatch(r"[a-z]+ round(?: interview)?", value, re.I):
+            return value[:1].upper() + value[1:].lower()
+        return value[:20]
+    return None
+
+
+def extract_interview_access(body: str) -> str | None:
+    text = _nfkc(body)
+    parts: list[str] = []
+    for pattern, label in INTERVIEW_ACCESS_PATTERNS:
+        match = pattern.search(text)
+        if not match:
+            continue
+        value = match.group(1).strip(" \t，,。；;")
+        value = re.sub(r"\s{2,}", " ", value)
+        if not value:
+            continue
+        part = f"{label} {value}"
+        if part not in parts:
+            parts.append(part)
+    return " · ".join(parts)[:80] if parts else None
+
+
 def extract_fields(
     subject: str,
     body: str,
     sender_name: str,
     sender_email: str,
     links: list[EmailLink],
+    *,
+    kind: str = "exam",
 ) -> ExtractedFields:
     company = extract_company(subject, body, sender_name, sender_email)
     role = extract_role(subject, body, company)
-    selected = select_exam_link(links)
+    if kind == "interview":
+        selected = select_interview_link(links)
+    else:
+        selected = select_exam_link(links)
     exam_url = normalize_url(selected.url) if selected else None
-    platform = detect_platform(f"{subject}\n{body}", links, selected)
-    mode, location = _mode_and_location(body, exam_url, platform)
-    access_match = ACCESS_CODE_RE.search(_nfkc(body))
-    access_code = access_match.group(1).strip() if access_match else None
+    platform = detect_platform(f"{subject}\n{body}", links, selected, kind=kind)
+    mode, location = _mode_and_location(body, exam_url, platform, kind)
+    if kind == "interview":
+        access_code = extract_interview_access(body)
+        if not access_code:
+            access_match = ACCESS_CODE_RE.search(_nfkc(body))
+            access_code = access_match.group(1).strip() if access_match else None
+        interview_round = extract_interview_round(subject, body)
+    else:
+        access_match = ACCESS_CODE_RE.search(_nfkc(body))
+        access_code = access_match.group(1).strip() if access_match else None
+        interview_round = None
     notes = _extract_notes(body)
     return ExtractedFields(
         company=company,
@@ -477,4 +601,5 @@ def extract_fields(
         location=location,
         access_code=access_code,
         auto_notes=notes,
+        interview_round=interview_round,
     )

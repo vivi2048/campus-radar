@@ -37,6 +37,8 @@ CREATE UNIQUE INDEX IF NOT EXISTS idx_accounts_mailbox
 CREATE TABLE IF NOT EXISTS events (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     account_id INTEGER REFERENCES accounts(id) ON DELETE CASCADE,
+    kind TEXT NOT NULL DEFAULT 'exam' CHECK (kind IN ('exam', 'interview')),
+    interview_round TEXT NOT NULL DEFAULT '',
     company TEXT NOT NULL DEFAULT '',
     role TEXT NOT NULL DEFAULT '',
     exam_start TEXT,
@@ -90,6 +92,21 @@ class Database:
         with self.connection() as conn:
             conn.execute("PRAGMA journal_mode=WAL")
             conn.executescript(SCHEMA)
+            columns = {
+                row["name"] for row in conn.execute("PRAGMA table_info(events)").fetchall()
+            }
+            if "kind" not in columns:
+                conn.execute(
+                    "ALTER TABLE events ADD COLUMN kind TEXT NOT NULL DEFAULT 'exam'"
+                )
+            if "interview_round" not in columns:
+                conn.execute(
+                    "ALTER TABLE events ADD COLUMN interview_round TEXT NOT NULL DEFAULT ''"
+                )
+            conn.execute(
+                "CREATE INDEX IF NOT EXISTS idx_events_kind_start "
+                "ON events (kind, exam_start)"
+            )
 
     @contextmanager
     def connection(self) -> Iterator[sqlite3.Connection]:

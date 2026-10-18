@@ -5,8 +5,8 @@ import tempfile
 from pathlib import Path
 
 # Avoid touching the real local data directory when app.main is imported in tests.
-os.environ.setdefault("EXAM_RADAR_DATA_DIR", tempfile.mkdtemp(prefix="exam-radar-test-"))
-os.environ["EXAM_RADAR_DISABLE_SCHEDULER"] = "1"
+os.environ.setdefault("CAMPUS_RADAR_DATA_DIR", tempfile.mkdtemp(prefix="campus-radar-test-"))
+os.environ["CAMPUS_RADAR_DISABLE_SCHEDULER"] = "1"
 
 import pytest
 
@@ -25,5 +25,5 @@ def client(settings: Settings):
 
     app = create_app(settings)
     with TestClient(app) as test_client:
-        test_client.headers["X-Exam-Radar-Request"] = "1"
+        test_client.headers["X-Campus-Radar-Request"] = "1"
         yield test_client

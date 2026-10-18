@@ -7,5 +7,5 @@ data/
 .demo-data/
 .demo-server.log
 *.log
-.venv/.exam-radar-ready
+.venv/.campus-radar-ready
 .ruff_cache/

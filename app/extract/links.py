@@ -13,6 +13,7 @@ class PlatformRule:
     domain: str
     name: str
     exam_platform: bool = True
+    interview_platform: bool = False
 
 
 PLATFORM_RULES: tuple[PlatformRule, ...] = (
@@ -29,7 +30,7 @@ PLATFORM_RULES: tuple[PlatformRule, ...] = (
     PlatformRule("codesignal.com", "CodeSignal"),
     PlatformRule("leetcode.cn", "LeetCode"),
     PlatformRule("leetcode.com", "LeetCode"),
-    PlatformRule("hirevue.com", "HireVue"),
+    PlatformRule("hirevue.com", "HireVue", exam_platform=True, interview_platform=True),
     PlatformRule("testgorilla.com", "TestGorilla"),
     PlatformRule("coderbyte.com", "Coderbyte"),
     PlatformRule("mokahr.com", "Moka", exam_platform=False),
@@ -38,7 +39,23 @@ PLATFORM_RULES: tuple[PlatformRule, ...] = (
     PlatformRule("greenhouse.io", "Greenhouse", exam_platform=False),
     PlatformRule("taleo.net", "Oracle Taleo", exam_platform=False),
     PlatformRule("successfactors.com", "SAP SuccessFactors", exam_platform=False),
+    PlatformRule("zoom.us", "Zoom", exam_platform=False, interview_platform=True),
+    PlatformRule("tencent.com", "腾讯会议", exam_platform=False, interview_platform=True),
+    PlatformRule("voovmeeting.com", "腾讯会议", exam_platform=False, interview_platform=True),
+    PlatformRule("feishu.cn", "飞书会议", exam_platform=False, interview_platform=True),
+    PlatformRule("larkoffice.com", "飞书会议", exam_platform=False, interview_platform=True),
+    PlatformRule("larksuite.com", "飞书会议", exam_platform=False, interview_platform=True),
+    PlatformRule("dingtalk.com", "钉钉会议", exam_platform=False, interview_platform=True),
+    PlatformRule("teams.microsoft.com", "Microsoft Teams", exam_platform=False, interview_platform=True),
+    PlatformRule("teams.live.com", "Microsoft Teams", exam_platform=False, interview_platform=True),
+    PlatformRule("meet.google.com", "Google Meet", exam_platform=False, interview_platform=True),
+    PlatformRule("webex.com", "Webex", exam_platform=False, interview_platform=True),
+    PlatformRule("gotomeeting.com", "GoTo Meeting", exam_platform=False, interview_platform=True),
+    PlatformRule("bluejeans.com", "BlueJeans", exam_platform=False, interview_platform=True),
+    PlatformRule("meeting.huaweicloud.com", "华为云会议", exam_platform=False, interview_platform=True),
+    PlatformRule("welink.huaweicloud.com", "WeLink", exam_platform=False, interview_platform=True),
 )
+
 
 TRACKING_HOST_PREFIXES = ("click.", "click-", "track.", "trk.")
 TRACKING_HOST_MARKERS = (
@@ -78,6 +95,22 @@ EXAM_ANCHOR_CUES = re.compile(
     r"(?:开始|进入|参加|前往|打开|点击|登录).{0,8}(?:考试|测评|笔试|作答)"
     r"|(?:考试|测评|笔试|作答).{0,8}(?:链接|入口|系统|平台|专区)"
     r"|(?:start|begin|enter|take).{0,8}(?:test|exam|assessment)",
+    re.IGNORECASE,
+)
+INTERVIEW_URL_CUES = re.compile(
+    r"(?:^|[/._-])(interview|meeting|meet|join|video|conference|call|schedule)(?:[/._?&=-]|$)",
+    re.IGNORECASE,
+)
+INTERVIEW_ANCHOR_CUES = re.compile(
+    r"(?:面试|面谈|视频|电话).{0,10}(?:链接|入口|会议|房间|会议室)"
+    r"|(?:接受|确认|预约|参加).{0,4}(?:面试|面谈)"
+    r"|(?:加入|进入|点击|打开|签到).{0,10}(?:会议|面试|会议室)"
+    r"|(?:join|enter|open|accept).{0,12}(?:meeting|interview|room)"
+    r"|(?:meeting|interview)\s+link",
+    re.IGNORECASE,
+)
+INTERVIEW_HOST_CUES = re.compile(
+    r"(?:^|\.)(?:meeting|meet|interview|video|conference|call|vc)\.",
     re.IGNORECASE,
 )
 GENERIC_TARGET_CUES = re.compile(r"点击|进入|前往|打开|链接|入口|click|start|enter", re.IGNORECASE)
@@ -195,7 +228,69 @@ def has_exam_link(links: list[EmailLink]) -> bool:
     return any(score_assessment_link(link) >= 5 for link in links)
 
 
-def detect_platform(text: str, links: list[EmailLink], selected: SelectedLink | None = None) -> str | None:
+def score_interview_link(link: EmailLink) -> int:
+    url = normalize_url(link.url)
+    if is_tracking_link(url):
+        return -20
+    rule = _platform_rule(url)
+    score = 0
+    if rule:
+        if rule.interview_platform:
+            score += 8
+        elif rule.exam_platform:
+            score += 3
+    try:
+        parsed = urlparse(url)
+    except ValueError:
+        parsed = None
+    path_query = (parsed.path + "?" + parsed.query) if parsed else ""
+    host = (parsed.hostname or "") if parsed else ""
+    if INTERVIEW_URL_CUES.search(path_query):
+        score += 3
+    if INTERVIEW_HOST_CUES.search(host):
+        score += 3
+    if link.text and INTERVIEW_ANCHOR_CUES.search(link.text):
+        score += 4
+    elif link.text and GENERIC_TARGET_CUES.search(link.text):
+        score += 1
+    lower = url.lower()
+    if any(token in lower for token in ("download", "support", "faq", "help-center")):
+        score -= 6
+    if any(token in lower for token in ("career", "jobs", "apply", "application", "privacy")):
+        score -= 2
+    return score
+
+
+def select_interview_link(links: list[EmailLink]) -> SelectedLink | None:
+    scored: list[SelectedLink] = []
+    seen: set[str] = set()
+    for link in links:
+        url = normalize_url(link.url)
+        if not url or url in seen:
+            continue
+        seen.add(url)
+        score = score_interview_link(EmailLink(url=url, text=link.text))
+        if score < 3:
+            continue
+        rule = _platform_rule(url)
+        scored.append(SelectedLink(url=url, platform=rule.name if rule else None, score=score))
+    if not scored:
+        return None
+    scored.sort(key=lambda item: item.score, reverse=True)
+    return scored[0]
+
+
+def has_interview_link(links: list[EmailLink]) -> bool:
+    return any(score_interview_link(link) >= 5 for link in links)
+
+
+def detect_platform(
+    text: str,
+    links: list[EmailLink],
+    selected: SelectedLink | None = None,
+    *,
+    kind: str = "exam",
+) -> str | None:
     if selected:
         if selected.platform:
             return selected.platform
@@ -204,9 +299,29 @@ def detect_platform(text: str, links: list[EmailLink], selected: SelectedLink | 
             return rule.name
     for link in links:
         rule = _platform_rule(normalize_url(link.url))
-        if rule and rule.exam_platform:
+        if not rule:
+            continue
+        if kind == "interview" and rule.interview_platform:
+            return rule.name
+        if kind == "exam" and rule.exam_platform:
             return rule.name
     body = text or ""
+    if kind == "interview":
+        interview_checks = (
+            (r"腾讯会议|Tencent\s+Meeting|VooV\s+Meeting", "腾讯会议"),
+            (r"飞书(?:会议)?|Feishu|Lark\s+Meeting", "飞书会议"),
+            (r"钉钉(?:会议)?|DingTalk", "钉钉会议"),
+            (r"\bZoom\b", "Zoom"),
+            (r"Microsoft\s+Teams|\bTeams\b", "Microsoft Teams"),
+            (r"Google\s+Meet", "Google Meet"),
+            (r"\bWebex\b", "Webex"),
+            (r"牛客(?:面试|网)?", "牛客网"),
+            (r"\bHireVue\b", "HireVue"),
+        )
+        for pattern, name in interview_checks:
+            if re.search(pattern, body, re.IGNORECASE):
+                return name
+        return None
     checks = (
         (r"牛客(?:网)?", "牛客网"),
         (r"赛码(?:网)?", "赛码网"),

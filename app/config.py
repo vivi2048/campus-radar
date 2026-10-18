@@ -10,17 +10,17 @@ BASE_DIR = Path(__file__).resolve().parent.parent
 STATIC_DIR = BASE_DIR / "static"
 LOCAL_TZ = ZoneInfo("Asia/Shanghai")
 APP_VERSION = "1.0.0"
-APP_NAME = "exam-radar"
-_ENV_PREFIX = "EXAM_RADAR"
-_LEGACY_ENV_PREFIX = "EXAMHELPER"
+APP_NAME = "campus-radar"
+_ENV_PREFIXES = ("CAMPUS_RADAR", "EXAM_RADAR", "EXAMHELPER")
 
 
 def env_value(name: str, default: str = "") -> str:
-    """Read a new-style variable, falling back to the pre-rename name."""
-    value = os.getenv(f"{_ENV_PREFIX}_{name}")
-    if value is None:
-        value = os.getenv(f"{_LEGACY_ENV_PREFIX}_{name}")
-    return default if value is None else value
+    """Read a current variable, then fall back through older project names."""
+    for prefix in _ENV_PREFIXES:
+        value = os.getenv(f"{prefix}_{name}")
+        if value is not None:
+            return value
+    return default
 
 
 def _env_int(name: str, default: int) -> int:
@@ -45,7 +45,7 @@ class Settings:
 
     @property
     def db_path(self) -> Path:
-        return self.data_dir / "exam-radar.db"
+        return self.data_dir / "campus-radar.db"
 
     @property
     def secret_key_path(self) -> Path:
@@ -53,16 +53,22 @@ class Settings:
 
     @property
     def log_path(self) -> Path:
-        return self.data_dir / "exam-radar.log"
+        return self.data_dir / "campus-radar.log"
 
 
 def migrate_legacy_database(data_dir: Path) -> None:
-    """Copy the pre-rename database once, keeping the original as a backup."""
-    legacy_path = data_dir / "examhelper.db"
-    current_path = data_dir / "exam-radar.db"
-    if current_path.exists() or not legacy_path.exists():
+    """Copy the newest pre-rename database once, keeping the original as backup."""
+    current_path = data_dir / "campus-radar.db"
+    if current_path.exists():
         return
-    source = sqlite3.connect(legacy_path)
+    legacy_sources = (
+        data_dir / "exam-radar.db",
+        data_dir / "examhelper.db",
+    )
+    source_path = next((path for path in legacy_sources if path.exists()), None)
+    if source_path is None:
+        return
+    source = sqlite3.connect(source_path)
     target = sqlite3.connect(current_path)
     try:
         source.backup(target)

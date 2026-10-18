@@ -4,7 +4,7 @@ from __future__ import annotations
 def test_meta_and_providers(client):
     meta = client.get("/api/meta")
     assert meta.status_code == 200
-    assert meta.json()["app_name"] == "exam-radar"
+    assert meta.json()["app_name"] == "campus-radar"
     providers = client.get("/api/providers")
     assert providers.status_code == 200
     ids = {provider["id"] for provider in providers.json()}
@@ -14,10 +14,13 @@ def test_meta_and_providers(client):
 def test_demo_events_detail_edit_and_clear(client):
     response = client.post("/api/demo")
     assert response.status_code == 201
-    assert response.json()["inserted"] == 5
+    assert response.json()["inserted"] == 7
     events = client.get("/api/events").json()
-    assert len(events) == 5
+    assert len(events) == 7
     assert any(event["is_demo"] for event in events)
+    interviews = [event for event in events if event["kind"] == "interview"]
+    assert len(interviews) == 2
+    assert {event["interview_round"] for event in interviews} == {"一面", "二面"}
     first = events[0]
     detail = client.get(f"/api/events/{first['id']}")
     assert detail.status_code == 200
@@ -42,7 +45,7 @@ def test_demo_events_detail_edit_and_clear(client):
 
     cleared = client.delete("/api/demo")
     assert cleared.status_code == 200
-    assert cleared.json()["deleted"] == 5
+    assert cleared.json()["deleted"] == 7
     assert client.get("/api/events").json() == []
 
 
@@ -81,6 +84,39 @@ def test_manual_event_create_and_validation(client):
     deleted = client.delete(f"/api/events/{event['id']}")
     assert deleted.status_code == 200
     assert client.get(f"/api/events/{event['id']}").status_code == 404
+
+
+def test_manual_interview_event_create_and_kind_switch(client):
+    response = client.post(
+        "/api/events",
+        json={
+            "kind": "interview",
+            "interview_round": "一面",
+            "company": "示例公司",
+            "role": "产品经理",
+            "exam_start": "2026-11-03T14:00",
+            "duration_minutes": 45,
+            "platform": "腾讯会议",
+            "exam_url": "https://meeting.tencent.com/demo",
+            "access_code": "会议号 123 456 789",
+        },
+    )
+    assert response.status_code == 201
+    event = response.json()
+    assert event["kind"] == "interview"
+    assert event["interview_round"] == "一面"
+    assert event["duration_minutes"] == 45
+
+    switched = client.patch(f"/api/events/{event['id']}", json={"kind": "exam"})
+    assert switched.status_code == 200
+    assert switched.json()["kind"] == "exam"
+    assert switched.json()["interview_round"] == ""
+
+    invalid = client.post(
+        "/api/events",
+        json={"company": "示例公司", "kind": "other"},
+    )
+    assert invalid.status_code == 400
 
 
 def test_unknown_event_returns_404(client):
@@ -145,6 +181,7 @@ def test_account_crud_without_network(client, monkeypatch, settings):
     assert updated.json()["label"] == "招聘邮箱"
 
     assert client.post(f"/api/accounts/{account['id']}/sync").status_code == 202
+    assert client.post(f"/api/accounts/{account['id']}/rescan").status_code == 202
     assert client.post("/api/sync-all").status_code == 202
 
     deleted = client.delete(f"/api/accounts/{account['id']}")
@@ -153,7 +190,7 @@ def test_account_crud_without_network(client, monkeypatch, settings):
 
 
 def test_mutations_require_ui_header(client):
-    client.headers.pop("X-Exam-Radar-Request", None)
+    client.headers.pop("X-Campus-Radar-Request", None)
     response = client.post("/api/demo")
     assert response.status_code == 403
     assert response.json()["detail"] == "请求来源校验失败"

@@ -8,9 +8,11 @@ import pytest
 import app.services.accounts as accounts_service
 from app.db import Database
 from app.mail.imap import SearchResult
+from app.mail.mime import make_message_key, parse_raw_email
 from app.security import SecretBox
 from app.services.accounts import create_account
 from app.services.sync import SyncService
+from app.timeutil import utc_now_iso
 
 
 FIXTURES = Path(__file__).parent / "fixtures"
@@ -61,8 +63,9 @@ def sync_setup(tmp_path, monkeypatch):
         2: (FIXTURES / "xingye_reminder.eml").read_bytes(),
         3: (FIXTURES / "interview_invite.eml").read_bytes(),
         4: (FIXTURES / "offline_exam.eml").read_bytes(),
+        5: (FIXTURES / "interview_reminder.eml").read_bytes(),
     }
-    logger = logging.getLogger("exam-radar-test-sync")
+    logger = logging.getLogger("campus-radar-test-sync")
     service = SyncService(
         db,
         vault,
@@ -72,32 +75,42 @@ def sync_setup(tmp_path, monkeypatch):
     return db, vault, account, service, messages
 
 
-def test_sync_creates_one_event_and_merges_reminder(sync_setup):
+def test_sync_creates_exam_and_interview_events_and_merges_reminders(sync_setup):
     db, _, account, service, _ = sync_setup
     result = service.sync_account(account["id"])
     assert result.success
-    assert result.counts["scanned"] == 4
-    assert result.counts["matched"] == 3
-    assert result.counts["created"] == 2
-    assert result.counts["merged"] == 1
-    assert result.counts["skipped"] == 1
+    assert result.counts["scanned"] == 5
+    assert result.counts["matched"] == 5
+    assert result.counts["created"] == 3
+    assert result.counts["created_exams"] == 2
+    assert result.counts["created_interviews"] == 1
+    assert result.counts["merged"] == 2
+    assert result.counts["skipped"] == 0
 
     events = db.fetch_all("SELECT * FROM events ORDER BY id")
-    assert len(events) == 2
+    assert len(events) == 3
     xingye = next(event for event in events if event["company"] == "星野科技")
+    assert xingye["kind"] == "exam"
     assert xingye["role"] == "后端开发工程师"
     assert xingye["source_count"] == 2
     assert xingye["exam_start"] == "2026-10-22T19:00+08:00"
     assert xingye["access_code"] == "XINGYE2026"
     assert xingye["needs_review"] == 0
 
+    farhill = next(event for event in events if event["company"] == "远山资本")
+    assert farhill["kind"] == "interview"
+    assert farhill["role"] == "投资分析师"
+    assert farhill["source_count"] == 2
+    assert farhill["exam_start"] == "2026-10-23T14:00+08:00"
+    assert farhill["exam_url"] == "https://meeting.example.com/abc"
+
     account_row = db.fetch_one("SELECT * FROM accounts WHERE id = ?", (account["id"],))
     assert account_row["last_sync_status"] == "ok"
-    assert account_row["last_uid"] == 4
+    assert account_row["last_uid"] == 5
     assert account_row["uidvalidity"] == "42"
 
     outcomes = {row["message_key"]: row["outcome"] for row in db.fetch_all("SELECT * FROM seen_messages")}
-    assert sorted(outcomes.values()) == ["created", "created", "merged", "not_exam"]
+    assert sorted(outcomes.values()) == ["created", "created", "created", "merged", "merged"]
 
 
 def test_sync_is_idempotent(sync_setup):
@@ -109,7 +122,31 @@ def test_sync_is_idempotent(sync_setup):
     assert second.counts["created"] == 0
     assert second.counts["merged"] == 0
     count = db.fetch_one("SELECT COUNT(*) AS count FROM events")
-    assert count["count"] == 2
+    assert count["count"] == 3
+
+
+def test_rescan_reprocesses_previously_skipped_messages(sync_setup):
+    db, _, account, service, _ = sync_setup
+    raw = (FIXTURES / "interview_invite.eml").read_bytes()
+    parsed = parse_raw_email(raw)
+    message_key = make_message_key(parsed, raw)
+    db.execute(
+        """
+        INSERT INTO seen_messages (account_id, message_key, outcome, event_id, seen_at)
+        VALUES (?, ?, 'not_exam', NULL, ?)
+        """,
+        (account["id"], message_key, utc_now_iso()),
+    )
+
+    result = service.sync_account(account["id"], rescan=True)
+    assert result.success
+    assert result.counts["scanned"] == 5
+    assert result.counts["reclassified"] == 1
+    assert result.counts["created_interviews"] == 1
+    farhill = db.fetch_one("SELECT * FROM events WHERE company = '远山资本'")
+    assert farhill is not None
+    assert farhill["kind"] == "interview"
+    assert farhill["exam_start"] == "2026-10-23T14:00+08:00"
 
 
 def test_sync_marks_error_when_credentials_cannot_decrypt(tmp_path, monkeypatch):
@@ -132,7 +169,7 @@ def test_sync_marks_error_when_credentials_cannot_decrypt(tmp_path, monkeypatch)
     service = SyncService(
         db,
         vault,
-        logging.getLogger("exam-radar-test-sync-error"),
+        logging.getLogger("campus-radar-test-sync-error"),
         session_factory=lambda account: FakeSession({}),
     )
     result = service.sync_account(account["id"])
@@ -146,12 +183,12 @@ def test_reschedule_email_updates_existing_event(sync_setup):
     db, _, account, service, _ = sync_setup
     assert service.sync_account(account["id"]).success
     reschedule_session = FakeSession(
-        {5: (FIXTURES / "xingye_reschedule.eml").read_bytes()}
+        {6: (FIXTURES / "xingye_reschedule.eml").read_bytes()}
     )
     reschedule_service = SyncService(
         db,
         service.vault,
-        logging.getLogger("exam-radar-test-reschedule"),
+        logging.getLogger("campus-radar-test-reschedule"),
         session_factory=lambda account: reschedule_session,
     )
     result = reschedule_service.sync_account(account["id"])
@@ -162,7 +199,7 @@ def test_reschedule_email_updates_existing_event(sync_setup):
     assert xingye["exam_start"] == "2026-10-23T19:00+08:00"
     assert xingye["exam_end"] == "2026-10-23T21:00+08:00"
     assert xingye["source_count"] == 3
-    assert db.fetch_one("SELECT COUNT(*) AS count FROM events")["count"] == 2
+    assert db.fetch_one("SELECT COUNT(*) AS count FROM events")["count"] == 3
 
 
 def test_clearing_exam_start_clears_end(client):
