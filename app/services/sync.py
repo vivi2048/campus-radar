@@ -198,6 +198,17 @@ class SyncService:
                                         else note
                                     ),
                                 )
+                        if llm_error and analysis.accepted:
+                            note = "大模型识别失败，暂用本地规则识别，请核对。"
+                            analysis = replace(
+                                analysis,
+                                needs_review=True,
+                                auto_notes=(
+                                    f"{note}\n{analysis.auto_notes}"
+                                    if analysis.auto_notes
+                                    else note
+                                ),
+                            )
                         if not analysis.accepted or not analysis.fields or not analysis.timing:
                             counts["skipped"] += 1
                             if llm_error:
@@ -356,11 +367,13 @@ class SyncService:
         deadline = timing.deadline
         deadline_known = timing.deadline_time_known
         duration = timing.duration_minutes
+        start_is_window = timing.start_is_window
         notes = [primary.auto_notes] if primary.auto_notes else []
         if (not start or not time_known) and fallback.timing.exam_start:
             start = fallback.timing.exam_start
             end = fallback.timing.exam_end
             time_known = fallback.timing.exam_time_known
+            start_is_window = fallback.timing.start_is_window
             if fallback.timing.start_note:
                 notes.append(fallback.timing.start_note)
         if not deadline and fallback.timing.deadline:
@@ -379,6 +392,7 @@ class SyncService:
             deadline=deadline,
             deadline_time_known=deadline_known,
             duration_minutes=duration,
+            start_is_window=start_is_window,
         )
         return replace(
             primary,

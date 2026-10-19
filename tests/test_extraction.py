@@ -8,7 +8,7 @@ import pytest
 from app.extract.dates import extract_timings, normalize_timing_text
 from app.extract.classify import classify_email
 from app.extract.pipeline import analyze_email
-from app.mail.mime import EmailLink, parse_raw_email
+from app.mail.mime import EmailLink, ParsedEmail, parse_raw_email
 
 FIXTURES = Path(__file__).parent / "fixtures"
 RECEIVED = datetime(2026, 10, 18, 2, 0, tzinfo=timezone.utc)
@@ -153,14 +153,131 @@ def test_exam_window_start_and_deadline():
     assert timing.exam_time_known is True
 
 
+def test_effective_time_is_start_and_trailing_deadline_is_not_start():
+    text = (
+        "本次测试邀请于2026年10月14日 周三 09:01生效，请在60分钟内完成测试。\n"
+        "本次测试邀请于2026年10月21日 周三 09:01 截止，请尽快作答。"
+    )
+    timing = extract_timings(
+        text,
+        datetime(2026, 10, 14, 1, 0, tzinfo=timezone.utc),
+    )
+    assert timing.exam_start == "2026-10-14T09:01+08:00"
+    assert timing.exam_end is None
+    assert timing.exam_time_known is True
+    assert timing.deadline == "2026-10-21T09:01+08:00"
+    assert timing.deadline_time_known is True
+    assert timing.duration_minutes == 60
+    assert timing.start_is_window is True
+    assert "有效窗口" in (timing.start_note or "")
+
+
+def test_exam_period_range_starts_at_window_open():
+    text = (
+        "考试期间：（北京时间）2026-10-16 23:41 ~ 2026-10-23 23:41\n"
+        "考试时长：60 分钟"
+    )
+    timing = extract_timings(
+        text,
+        datetime(2026, 10, 16, 15, 41, tzinfo=timezone.utc),
+    )
+    assert timing.exam_start == "2026-10-16T23:41+08:00"
+    assert timing.exam_end is None
+    assert timing.deadline == "2026-10-23T23:41+08:00"
+    assert timing.duration_minutes == 60
+    assert timing.start_is_window is True
+
+
+def test_maintenance_window_is_not_used_as_interview_time():
+    text = (
+        "整场面试时间约为15分钟。\n"
+        "请留意另一封在线测评邀请邮件，并于收到邮件的48小时内完成作答。\n"
+        "注意：北京时间9月19日 00:00至9月19日09:00 AI面试官将进行产品升级，"
+        "AI面试暂时锁定无法作答，请您避开此时间段进行答题。"
+    )
+    timing = extract_timings(
+        text,
+        datetime(2026, 10, 15, 6, 3, tzinfo=timezone.utc),
+        kind="interview",
+    )
+    assert timing.exam_start is None
+    assert timing.deadline is None
+    assert timing.exam_start != "2026-09-19T00:00+08:00"
+    assert timing.deadline != "2026-09-19T09:00+08:00"
+
+
+def test_deadline_for_another_email_is_not_applied():
+    text = "请留意另一封在线测评邀请邮件，并于收到邮件的48小时内完成作答。"
+    received = datetime(2026, 10, 15, 6, 3, tzinfo=timezone.utc)
+    interview = extract_timings(text, received, kind="interview")
+    assert interview.exam_start is None
+    assert interview.deadline is None
+
+    assessment = extract_timings(text, received, kind="exam")
+    assert assessment.exam_start == "2026-10-15T14:03+08:00"
+    assert assessment.deadline == "2026-10-17T14:03+08:00"
+
+
+def test_real_interview_time_survives_nearby_maintenance_window():
+    text = (
+        "面试时间：2026年10月20日 14:00。\n"
+        "注意：北京时间9月19日 00:00至9月19日09:00 系统升级，"
+        "AI面试暂时锁定无法作答，请避开此时段。"
+    )
+    timing = extract_timings(
+        text,
+        datetime(2026, 10, 15, 6, 3, tzinfo=timezone.utc),
+        kind="interview",
+    )
+    assert timing.exam_start == "2026-10-20T14:00+08:00"
+    assert timing.deadline is None
+
+
+def test_effective_window_marks_event_for_review():
+    parsed = ParsedEmail(
+        subject="中国外运2027届校园招聘笔试邀请",
+        sender_name="中国外运招聘",
+        sender_email="campus@sinotrans.com",
+        received_at=datetime(2026, 10, 14, 1, 0, tzinfo=timezone.utc),
+        body_text=(
+            "恭喜您通过简历筛选，现邀请您参加中国外运股份有限公司2027届校园招聘笔试。\n"
+            "本次测试邀请于2026年10月14日 周三 09:01生效，请在60分钟内完成测试。\n"
+            "本次测试邀请于2026年10月21日 周三 09:01 截止，请尽快作答。"
+        ),
+        html_text="",
+        links=[],
+    )
+    analysis = analyze_email(parsed)
+    assert analysis.accepted
+    assert analysis.timing is not None
+    assert analysis.timing.exam_start == "2026-10-14T09:01+08:00"
+    assert analysis.timing.deadline == "2026-10-21T09:01+08:00"
+    assert analysis.needs_review is True
+    assert "有效窗口" in (analysis.auto_notes or "")
+
+
 def test_relative_deadline_from_received_time():
     timing = extract_timings("请在收到本邮件后 48 小时内完成在线测评", RECEIVED)
-    assert timing.exam_start == "2026-10-18T14:00+08:00"
+    assert timing.exam_start == "2026-10-18T10:00+08:00"
     assert timing.exam_time_known is True
-    assert timing.start_estimated is True
+    assert timing.start_estimated is False
+    assert timing.start_is_window is True
     assert timing.deadline == "2026-10-20T10:00+08:00"
     assert timing.deadline_note
-    assert "自动安排" in (timing.start_note or "")
+    assert "收件时间" in (timing.start_note or "")
+
+
+def test_natural_days_after_receipt_use_received_time_as_start():
+    timing = extract_timings("请在收到笔试题后的3个自然日内完成。", RECEIVED)
+    assert timing.exam_start == "2026-10-18T10:00+08:00"
+    assert timing.exam_end is None
+    assert timing.exam_time_known is True
+    assert timing.deadline == "2026-10-21T10:00+08:00"
+    assert timing.deadline_time_known is True
+    assert timing.start_estimated is False
+    assert timing.start_is_window is True
+    assert "3 个自然日" in (timing.deadline_note or "")
+    assert "收件时间" in (timing.start_note or "")
 
 
 def test_chinese_time_immediately_after_colon():
@@ -288,11 +405,16 @@ def test_interview_relative_validity_window():
 def test_received_email_possessive_and_bare_day_windows():
     first = extract_timings("请于收到邮件的48小时内完成在线测评", RECEIVED)
     assert first.deadline == "2026-10-20T10:00+08:00"
-    assert first.exam_start == "2026-10-18T14:00+08:00"
+    assert first.exam_start == "2026-10-18T10:00+08:00"
 
     second = extract_timings("请于2天内点击链接进行网络测评", RECEIVED)
     assert second.deadline == "2026-10-20T10:00+08:00"
-    assert second.exam_start == "2026-10-18T14:00+08:00"
+    assert second.exam_start == "2026-10-18T10:00+08:00"
+
+    third = extract_timings("请在2天内一次性完成在线测评", RECEIVED)
+    assert third.deadline == "2026-10-20T10:00+08:00"
+    assert third.exam_start == "2026-10-18T10:00+08:00"
+    assert third.start_is_window is True
 
 
 def test_normalize_time_variants():

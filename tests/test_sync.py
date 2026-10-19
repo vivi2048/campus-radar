@@ -299,6 +299,8 @@ def test_llm_error_falls_back_to_local_rules(sync_setup):
     event = db.fetch_one("SELECT * FROM events WHERE company = '远山资本'")
     assert event is not None
     assert event["exam_start"] == "2026-10-23T14:00+08:00"
+    assert event["needs_review"] == 1
+    assert "大模型识别失败" in (event["auto_notes"] or "")
 
 
 def test_llm_rejection_is_not_reprocessed_on_next_sync(sync_setup):

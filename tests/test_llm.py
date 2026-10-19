@@ -1,7 +1,9 @@
 from __future__ import annotations
 
+import io
 import json
 import logging
+import urllib.error
 from datetime import datetime, timezone
 
 import pytest
@@ -10,6 +12,9 @@ from app.db import Database
 from app.extract.classify import Classification
 from app.extract.pipeline import Analysis
 from app.llm import (
+    INITIAL_MAX_TOKENS,
+    RETRY_MAX_TOKENS,
+    ChatResponse,
     LLMConfig,
     LLMConfigError,
     LLMError,
@@ -140,6 +145,41 @@ def test_evidence_reparses_start_and_deadline_locally():
     assert analysis.timing.deadline == "2026-10-20T18:00+08:00"
 
 
+def test_llm_window_start_does_not_fabricate_end():
+    parsed = _parsed(
+        "笔试邀请",
+        "本次测试邀请于2026年10月14日 09:01生效，请在60分钟内完成测试。"
+        "本次测试邀请于2026年10月21日 09:01截止。",
+    )
+    analysis = build_analysis_from_payload(
+        {
+            "category": "exam_invite",
+            "actionable": True,
+            "is_event": True,
+            "kind": "exam",
+            "confidence": 0.95,
+            "company": "中国外运",
+            "start": "2026-10-14T09:01:00+08:00",
+            "end": None,
+            "time_known": True,
+            "start_is_window": True,
+            "deadline": "2026-10-21T09:01:00+08:00",
+            "deadline_time_known": True,
+            "duration_minutes": 60,
+            "evidence": {
+                "start": "本次测试邀请于2026年10月14日 09:01生效",
+                "deadline": "本次测试邀请于2026年10月21日 09:01截止",
+            },
+        },
+        parsed,
+    )
+    assert analysis is not None and analysis.timing is not None
+    assert analysis.timing.exam_start == "2026-10-14T09:01+08:00"
+    assert analysis.timing.exam_end is None
+    assert analysis.timing.deadline == "2026-10-21T09:01+08:00"
+    assert analysis.timing.start_is_window is True
+
+
 def test_missing_time_evidence_is_flagged_for_review():
     parsed = _parsed("考试邀请", "请参加本周的在线测评。")
     analysis = build_analysis_from_payload(
@@ -169,6 +209,69 @@ def test_parse_llm_response_handles_code_fence_and_rejects_noise():
     assert parse_llm_response('{"is_event": false, "kind": "interview"}') is None
     with pytest.raises(LLMError):
         parse_llm_response("not json")
+
+
+def test_llm_retries_with_larger_budget_when_reasoning_truncates(monkeypatch):
+    fallback = LLMFallback(
+        LLMConfig(
+            base_url="https://api.example.com/v1",
+            model="reasoning-model",
+            api_key="sk-test",
+        ),
+        logging.getLogger("campus-radar-test-llm-retry"),
+    )
+    calls: list[int] = []
+    payload = {
+        "category": "exam_invite",
+        "actionable": True,
+        "is_event": True,
+        "kind": "exam",
+        "confidence": 0.9,
+        "company": "示例科技",
+        "start": "2026-10-22T19:00:00+08:00",
+        "time_known": True,
+    }
+
+    def fake_chat(messages, *, max_tokens):
+        calls.append(max_tokens)
+        if len(calls) == 1:
+            return ChatResponse(
+                content="",
+                finish_reason="length",
+                reasoning_chars=7000,
+                completion_tokens=INITIAL_MAX_TOKENS,
+            )
+        return ChatResponse(content=json.dumps(payload), finish_reason="stop")
+
+    monkeypatch.setattr(fallback, "_chat", fake_chat)
+    analysis = fallback.analyze(_parsed("考试邀请", "考试时间：2026年10月22日 19:00"))
+    assert analysis is not None
+    assert calls == [INITIAL_MAX_TOKENS, RETRY_MAX_TOKENS]
+
+
+def test_llm_does_not_treat_reasoning_as_answer(monkeypatch):
+    fallback = LLMFallback(
+        LLMConfig(
+            base_url="https://api.example.com/v1",
+            model="reasoning-model",
+            api_key="sk-test",
+        ),
+        logging.getLogger("campus-radar-test-llm-reasoning"),
+    )
+    calls: list[int] = []
+
+    def fake_chat(messages, *, max_tokens):
+        calls.append(max_tokens)
+        return ChatResponse(
+            content="",
+            finish_reason="stop",
+            reasoning_chars=1200,
+        )
+
+    monkeypatch.setattr(fallback, "_chat", fake_chat)
+    with pytest.raises(LLMError, match="空内容"):
+        fallback.analyze(_parsed("考试邀请", "考试时间：2026年10月22日 19:00"))
+    assert calls == [INITIAL_MAX_TOKENS, RETRY_MAX_TOKENS]
 
 
 def test_llm_candidate_filter_allows_unsubscribe_in_exam_invite():
@@ -285,7 +388,15 @@ def test_llm_http_connection_uses_openai_compatible_endpoint(monkeypatch):
 
         def read(self, _limit):
             return json.dumps(
-                {"choices": [{"message": {"content": '{"ok": true}'}}]}
+                {
+                    "choices": [
+                        {
+                            "message": {"content": '{"ok": true}'},
+                            "finish_reason": "stop",
+                        }
+                    ],
+                    "usage": {"completion_tokens": 12},
+                }
             ).encode("utf-8")
 
     def fake_urlopen(request, timeout):
@@ -308,3 +419,53 @@ def test_llm_http_connection_uses_openai_compatible_endpoint(monkeypatch):
     assert captured["url"] == "https://api.example.com/v1/chat/completions"
     assert captured["headers"]["authorization"] == "Bearer sk-test"
     assert captured["body"]["model"] == "demo-model"
+    assert captured["body"]["response_format"] == {"type": "json_object"}
+
+
+def test_llm_json_mode_falls_back_when_endpoint_rejects_it(monkeypatch):
+    bodies: list[dict] = []
+
+    class FakeResponse:
+        def __enter__(self):
+            return self
+
+        def __exit__(self, exc_type, exc, tb):
+            return None
+
+        def read(self, _limit):
+            return json.dumps(
+                {
+                    "choices": [
+                        {
+                            "message": {"content": '{"ok": true}'},
+                            "finish_reason": "stop",
+                        }
+                    ]
+                }
+            ).encode("utf-8")
+
+    def fake_urlopen(request, timeout):
+        body = json.loads(request.data.decode("utf-8"))
+        bodies.append(body)
+        if len(bodies) == 1:
+            raise urllib.error.HTTPError(
+                request.full_url,
+                400,
+                "Bad Request",
+                {},
+                io.BytesIO(b'{"error":"response_format is not supported"}'),
+            )
+        return FakeResponse()
+
+    monkeypatch.setattr("app.llm.urllib.request.urlopen", fake_urlopen)
+    fallback = LLMFallback(
+        LLMConfig(
+            base_url="https://api.example.com/v1",
+            model="demo-model",
+            api_key="sk-test",
+        ),
+        logging.getLogger("campus-radar-test-llm-json-fallback"),
+    )
+    assert "连接成功" in fallback.test_connection()
+    assert "response_format" in bodies[0]
+    assert "response_format" not in bodies[1]

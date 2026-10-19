@@ -30,9 +30,11 @@ SETTING_KEYS = (
 )
 DEFAULT_MAX_CALLS = 20
 MAX_CALLS_LIMIT = 300
-DEFAULT_TIMEOUT_SECONDS = 20
+DEFAULT_TIMEOUT_SECONDS = 60
 MIN_CONFIDENCE = 0.55
 MAX_BODY_CHARS = 8000
+INITIAL_MAX_TOKENS = 4096
+RETRY_MAX_TOKENS = 8192
 
 ACTIONABLE_CATEGORIES = {
     "exam_invite",
@@ -126,6 +128,9 @@ actionable 只有在 category 为 exam_invite、interview_invite、reschedule、
 - kind：exam 或 interview；reschedule 和 reminder 也要根据内容判断。
 - start/end：收件人实际参加笔试或面试的时间，不是申请截止、报名截止、链接有效期，也不是“尽快完成”。
 - deadline：要求确认参加、预约场次、提交材料或完成测试的截止时间；只有日期没有具体时间时 deadline_time_known=false。
+- 如果邮件只给出测评/笔试有效窗口（例如“10月14日 09:01 生效，10月21日 09:01 截止，请在60分钟内完成”），start 取窗口生效时间，deadline 取截止时间，duration_minutes 取单次作答时长，start_is_window=true，并在 notes 说明可在窗口内自主开始；不要把截止时间当成 start，也不要用 duration_minutes 推算 end。
+- 如果邮件要求“收到笔试题/通知后的 N 个自然日内完成”，start 取邮件收件时间，deadline 为收件时间加 N 天，start_is_window=true，并在 notes 说明；不要留空 start。
+- 系统升级、维护、暂时锁定、无法作答、“请避开此时间段”等是禁止作答的维护窗口，不是考试或面试时间；不要把这类时段填进 start/end/deadline。
 - 只依据主题、正文和链接；不要从签名、页脚、引用历史、广告、职位推荐或其他邮件内容推断。
 - 同一封邮件有多个安排时，选择最明确、时间最接近当前时间的一场，并在 notes 说明还有其他安排。
 - 不要编造；缺失字段用 null 或空字符串。只有日期没有具体时间时 time_known=false。
@@ -151,6 +156,7 @@ JSON 结构：
   "start": null,
   "end": null,
   "time_known": false,
+  "start_is_window": false,
   "deadline": null,
   "deadline_time_known": false,
   "duration_minutes": null,
@@ -196,6 +202,18 @@ class LLMConfig:
         if base.endswith("/chat/completions"):
             return base
         return f"{base}/chat/completions"
+
+
+@dataclass(frozen=True)
+class ChatResponse:
+    content: str
+    finish_reason: str = ""
+    reasoning_chars: int = 0
+    completion_tokens: int = 0
+
+    @property
+    def truncated(self) -> bool:
+        return self.finish_reason == "length"
 
 
 def _setting_rows(db: Database) -> dict[str, str]:
@@ -462,6 +480,7 @@ def build_analysis_from_payload(
     category = CATEGORY_ALIASES.get(category, category)
     actionable = _as_bool(payload.get("actionable"))
     is_event = _as_bool(payload.get("is_event"))
+    start_is_window = bool(_as_bool(payload.get("start_is_window")))
     if actionable is False or is_event is False:
         return None
     if category in NON_ACTIONABLE_CATEGORIES:
@@ -536,7 +555,7 @@ def build_analysis_from_payload(
 
     end, _ = _parse_time(payload.get("end")) or (None, False)
     duration = _duration(payload.get("duration_minutes"))
-    if start and time_known and duration and not end:
+    if start and time_known and duration and not end and not start_is_window:
         end = (
             datetime.fromisoformat(start) + timedelta(minutes=duration)
         ).isoformat(timespec="minutes")
@@ -583,6 +602,7 @@ def build_analysis_from_payload(
         deadline=deadline,
         deadline_time_known=deadline_time_known,
         duration_minutes=duration,
+        start_is_window=start_is_window,
     )
     classification = Classification(
         accepted=True,
@@ -629,6 +649,7 @@ class LLMFallback:
         self.config = config
         self.logger = logger
         self.max_calls = config.max_calls_per_sync
+        self._json_mode = True
 
     @staticmethod
     def should_consider(parsed: ParsedEmail, local_analysis: Analysis) -> bool:
@@ -669,37 +690,64 @@ class LLMFallback:
             f"正文：\n{parsed.body_text[:MAX_BODY_CHARS]}\n"
             f"链接：\n{links or '无'}"
         )
-        content = self._chat(
-            [
-                {"role": "system", "content": SYSTEM_PROMPT},
-                {"role": "user", "content": user_content},
-            ],
-            max_tokens=2000,
-        )
-        return parse_llm_response(content, parsed)
+        messages = [
+            {"role": "system", "content": SYSTEM_PROMPT},
+            {"role": "user", "content": user_content},
+        ]
+        last_error: LLMError | None = None
+        for attempt, max_tokens in enumerate((INITIAL_MAX_TOKENS, RETRY_MAX_TOKENS)):
+            response = self._chat(messages, max_tokens=max_tokens)
+            if response.content.strip():
+                try:
+                    return parse_llm_response(response.content, parsed)
+                except LLMError as exc:
+                    last_error = exc
+            if response.truncated:
+                last_error = LLMError(
+                    "大模型输出被截断：推理过程占满了输出预算，"
+                    f"完成 token {response.completion_tokens}，"
+                    f"推理内容 {response.reasoning_chars} 字符，未生成完整 JSON。"
+                )
+            elif not response.content.strip():
+                last_error = LLMError("大模型返回了空内容。")
+            if attempt == 0:
+                messages = [
+                    *messages,
+                    {
+                        "role": "user",
+                        "content": (
+                            "上一次回复没有给出可解析的完整 JSON。"
+                            "请重新判断，并只输出一个完整的 JSON 对象。"
+                        ),
+                    },
+                ]
+        assert last_error is not None
+        raise last_error
 
     def test_connection(self) -> str:
-        content = self._chat(
+        response = self._chat(
             [
                 {"role": "system", "content": "只输出 JSON 对象。"},
                 {"role": "user", "content": '请返回 {"ok": true}'},
             ],
             max_tokens=300,
         )
-        if not content.strip():
+        if not response.content.strip():
             self.logger.warning("LLM test connection returned an empty message")
         return "连接成功，模型已响应。"
 
-    def _chat(self, messages: list[dict[str, Any]], *, max_tokens: int) -> str:
-        body = json.dumps(
-            {
-                "model": self.config.model,
-                "temperature": 0,
-                "max_tokens": max_tokens,
-                "messages": messages,
-            },
-            ensure_ascii=False,
-        ).encode("utf-8")
+    def _chat(
+        self, messages: list[dict[str, Any]], *, max_tokens: int
+    ) -> ChatResponse:
+        payload: dict[str, Any] = {
+            "model": self.config.model,
+            "temperature": 0,
+            "max_tokens": max_tokens,
+            "messages": messages,
+        }
+        if self._json_mode:
+            payload["response_format"] = {"type": "json_object"}
+        body = json.dumps(payload, ensure_ascii=False).encode("utf-8")
         headers = {
             "Content-Type": "application/json",
             "Accept": "application/json",
@@ -719,10 +767,17 @@ class LLMFallback:
         except urllib.error.HTTPError as exc:
             detail = ""
             try:
-                detail = exc.read(300).decode("utf-8", "ignore").strip()
+                detail = exc.read(500).decode("utf-8", "ignore").strip()
             except Exception:
                 pass
             suffix = f"：{detail}" if detail else ""
+            if (
+                exc.code == 400
+                and self._json_mode
+                and re.search(r"response_format|json_object|json mode", detail, re.IGNORECASE)
+            ):
+                self._json_mode = False
+                return self._chat(messages, max_tokens=max_tokens)
             if exc.code == 404:
                 raise LLMError(
                     "大模型接口返回 HTTP 404，请检查接口地址。"
@@ -740,18 +795,29 @@ class LLMFallback:
         choices = data.get("choices") if isinstance(data, dict) else None
         if not isinstance(choices, list) or not choices:
             raise LLMError("大模型接口没有返回 choices。")
-        message = choices[0].get("message") if isinstance(choices[0], dict) else None
-        content = message.get("content") if isinstance(message, dict) else None
+        choice = choices[0] if isinstance(choices[0], dict) else {}
+        message = choice.get("message") if isinstance(choice.get("message"), dict) else {}
+        content = message.get("content")
         if isinstance(content, list):
             content = "".join(
                 str(part.get("text", ""))
                 for part in content
                 if isinstance(part, dict)
             )
-        if isinstance(message, dict) and not content:
-            reasoning = message.get("reasoning_content")
-            if isinstance(reasoning, str):
-                content = reasoning
+        reasoning = message.get("reasoning_content")
+        reasoning_chars = len(reasoning) if isinstance(reasoning, str) else 0
+        usage = data.get("usage") if isinstance(data, dict) else None
+        completion_tokens = 0
+        if isinstance(usage, dict):
+            try:
+                completion_tokens = int(usage.get("completion_tokens") or 0)
+            except (TypeError, ValueError):
+                completion_tokens = 0
         if not isinstance(content, str):
-            raise LLMError("大模型接口返回内容格式不正确。")
-        return content
+            content = ""
+        return ChatResponse(
+            content=content,
+            finish_reason=str(choice.get("finish_reason") or ""),
+            reasoning_chars=reasoning_chars,
+            completion_tokens=completion_tokens,
+        )

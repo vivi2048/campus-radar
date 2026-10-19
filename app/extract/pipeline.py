@@ -61,6 +61,7 @@ def analyze_email(parsed: ParsedEmail) -> Analysis:
         not timing.exam_start
         or not timing.exam_time_known
         or timing.start_estimated
+        or timing.start_is_window
         or not fields.company
     )
     return Analysis(
