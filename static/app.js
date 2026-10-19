@@ -333,7 +333,13 @@ function getPhase(event, now = new Date()) {
     return now >= dayEnd ? "ended" : "review";
   }
   const explicitEnd = parsedDate(event.exam_end);
-  const end = explicitEnd
+  const deadline = parsedDate(event.deadline);
+  let end = explicitEnd;
+  // A far-future deadline marks an open assessment window rather than a fixed slot.
+  if (!end && deadline && deadline.getTime() - start.getTime() > 12 * 3_600_000) {
+    end = deadline;
+  }
+  end = end
     || (event.duration_minutes
       ? new Date(start.getTime() + Number(event.duration_minutes) * 60_000)
       : new Date(start.getTime() + 2 * 3_600_000));
@@ -387,9 +393,9 @@ function statusInfo(event) {
   if (event.ignored) return { label: "已忽略", className: "is-ignored" };
   if (phase === "done") return { label: "已完成", className: "is-done" };
   if (phase === "cancelled") return { label: "已取消", className: "is-cancelled" };
+  if (isReviewEvent(event)) return { label: "待确认", className: "is-review" };
   if (phase === "live") return { label: "进行中", className: "is-live" };
   if (phase === "ended") return { label: "已结束", className: "is-ended" };
-  if (isReviewEvent(event)) return { label: "待确认", className: "is-review" };
   return { label: relativeDayLabel(event), className: "is-upcoming" };
 }
 
@@ -615,7 +621,7 @@ async function boot() {
   try {
     await loadAllData();
     updateSidebar();
-    renderCurrentView({ scroll: false });
+    renderCurrentView({ scroll: false, animate: true });
     state.booted = true;
     window.setTimeout(() => el.boot.classList.add("is-hidden"), 250);
     if (state.accounts.some((account) => account.last_sync_status === "syncing")) {
@@ -652,7 +658,7 @@ function navigate(view, { scroll = true } = {}) {
   state.view = view;
   if (state.drawer) closeDrawer();
   closeSidebar();
-  renderCurrentView({ scroll });
+  renderCurrentView({ scroll, animate: true });
 }
 
 function handleHashChange() {
@@ -661,12 +667,19 @@ function handleHashChange() {
   state.view = nextView;
   if (state.drawer) closeDrawer();
   closeSidebar();
-  renderCurrentView({ scroll: true });
+  renderCurrentView({ scroll: true, animate: true });
 }
 
-function renderCurrentView({ scroll = false } = {}) {
+let entryAnimationTimer = 0;
+
+function renderCurrentView({ scroll = false, animate = true } = {}) {
   document.title = `${VIEW_TITLES[state.view]} · 校招雷达`;
   updateSidebar();
+  if (entryAnimationTimer) {
+    window.clearTimeout(entryAnimationTimer);
+    entryAnimationTimer = 0;
+  }
+  el.root.classList.toggle("is-entering", animate);
   if (state.view === "dashboard") {
     el.root.innerHTML = renderDashboard();
   } else if (state.view === "library") {
@@ -677,6 +690,12 @@ function renderCurrentView({ scroll = false } = {}) {
     state.providerId = "";
     el.root.innerHTML = renderAccounts();
     updateProviderUI("", { initial: true });
+  }
+  if (animate) {
+    entryAnimationTimer = window.setTimeout(() => {
+      el.root.classList.remove("is-entering");
+      entryAnimationTimer = 0;
+    }, 1000);
   }
   if (scroll) window.scrollTo({ top: 0, behavior: "smooth" });
 }

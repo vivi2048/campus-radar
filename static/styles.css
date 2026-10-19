@@ -4063,3 +4063,76 @@ body {
     font-size: 24px;
   }
 }
+
+/* Component-level entry animations for full renders; partial updates stay silent. */
+.view-root.is-entering .focus-card {
+  animation: rise-in 420ms 80ms both;
+}
+
+.view-root.is-entering .events-panel {
+  animation: rise-in 440ms 120ms both;
+}
+
+.view-root.is-entering .event-card {
+  animation: fade-in 320ms both;
+}
+
+.view-root.is-entering .event-card:nth-child(2) { animation-delay: 40ms; }
+.view-root.is-entering .event-card:nth-child(3) { animation-delay: 80ms; }
+.view-root.is-entering .event-card:nth-child(4) { animation-delay: 120ms; }
+.view-root.is-entering .event-card:nth-child(5) { animation-delay: 160ms; }
+.view-root.is-entering .event-card:nth-child(6) { animation-delay: 200ms; }
+
+.view-root.is-entering .library-group {
+  animation: rise-in 380ms 40ms both;
+}
+
+.view-root.is-entering .library-group:nth-of-type(2) { animation-delay: 70ms; }
+.view-root.is-entering .library-group:nth-of-type(3) { animation-delay: 100ms; }
+.view-root.is-entering .library-group:nth-of-type(4) { animation-delay: 130ms; }
+.view-root.is-entering .library-group:nth-of-type(5) { animation-delay: 160ms; }
+
+.view-root.is-entering .account-card {
+  animation: rise-in 400ms both;
+}
+
+.view-root.is-entering .account-card:nth-child(2) { animation-delay: 60ms; }
+.view-root.is-entering .account-card:nth-child(3) { animation-delay: 120ms; }
+.view-root.is-entering .account-card:nth-child(4) { animation-delay: 180ms; }
+
+.view-root.is-entering .add-account-panel {
+  animation: rise-in 440ms 90ms both;
+}
+
+.view-root.is-entering .mailbox-explainer {
+  animation: rise-in 420ms 120ms both;
+}
+
+.view-root.is-entering .accounts-empty {
+  animation: fade-in 300ms both;
+}
+
+.view-root.is-entering .empty-state {
+  animation: fade-in 300ms 40ms both;
+}
+
+.view-root:not(.is-entering) .view-header,
+.view-root:not(.is-entering) .demo-banner,
+.view-root:not(.is-entering) .dashboard,
+.view-root:not(.is-entering) .summary-strip,
+.view-root:not(.is-entering) .library-toolbar,
+.view-root:not(.is-entering) .library-groups,
+.view-root:not(.is-entering) .library-group,
+.view-root:not(.is-entering) .accounts-layout,
+.view-root:not(.is-entering) .account-card,
+.view-root:not(.is-entering) .add-account-panel,
+.view-root:not(.is-entering) .mailbox-explainer,
+.view-root:not(.is-entering) .accounts-empty,
+.view-root:not(.is-entering) .onboarding-panel,
+.view-root:not(.is-entering) .ai-settings-panel,
+.view-root:not(.is-entering) .focus-card,
+.view-root:not(.is-entering) .events-panel,
+.view-root:not(.is-entering) .event-card,
+.view-root:not(.is-entering) .empty-state {
+  animation: none !important;
+}
