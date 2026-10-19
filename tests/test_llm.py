@@ -75,7 +75,88 @@ def test_build_analysis_from_llm_payload():
     assert analysis.timing.deadline == "2026-10-23T23:59+08:00"
     assert analysis.timing.deadline_time_known is False
     assert analysis.needs_review is True
-    assert "大模型兜底识别" in (analysis.auto_notes or "")
+    assert "大模型识别" in (analysis.auto_notes or "")
+
+
+def test_payload_category_gate_rejects_non_actionable_mail():
+    base = {
+        "category": "marketing",
+        "actionable": False,
+        "is_event": False,
+        "kind": "exam",
+        "confidence": 0.99,
+        "company": "示例教育",
+    }
+    assert build_analysis_from_payload(base) is None
+
+    result = {
+        **base,
+        "category": "result",
+        "actionable": True,
+        "is_event": True,
+    }
+    assert build_analysis_from_payload(result) is None
+
+    invite = {
+        **base,
+        "category": "exam_invite",
+        "actionable": True,
+        "is_event": True,
+        "start": "2026-10-20T19:00:00+08:00",
+        "time_known": True,
+    }
+    assert build_analysis_from_payload(invite) is not None
+    assert build_analysis_from_payload({**invite, "category": "考试邀请"}) is not None
+    assert build_analysis_from_payload({**invite, "category": "广告"}) is None
+
+
+def test_evidence_reparses_start_and_deadline_locally():
+    parsed = _parsed(
+        "考试邀请",
+        "考试时间：2026年10月22日 19:00，请准时参加。"
+        "截止时间：2026年10月20日 18:00。",
+    )
+    analysis = build_analysis_from_payload(
+        {
+            "category": "exam_invite",
+            "actionable": True,
+            "is_event": True,
+            "kind": "exam",
+            "confidence": 0.9,
+            "company": "示例科技",
+            "start": "2026-10-20T10:00:00+08:00",
+            "time_known": True,
+            "deadline": "2026-10-19T10:00:00+08:00",
+            "deadline_time_known": True,
+            "evidence": {
+                "start": "考试时间：2026年10月22日 19:00",
+                "deadline": "截止时间：2026年10月20日 18:00",
+            },
+        },
+        parsed,
+    )
+    assert analysis is not None and analysis.timing is not None
+    assert analysis.timing.exam_start == "2026-10-22T19:00+08:00"
+    assert analysis.timing.deadline == "2026-10-20T18:00+08:00"
+
+
+def test_missing_time_evidence_is_flagged_for_review():
+    parsed = _parsed("考试邀请", "请参加本周的在线测评。")
+    analysis = build_analysis_from_payload(
+        {
+            "category": "exam_invite",
+            "actionable": True,
+            "is_event": True,
+            "kind": "exam",
+            "confidence": 0.8,
+            "company": "示例科技",
+            "start": "2026-10-20T19:00:00+08:00",
+            "time_known": True,
+        },
+        parsed,
+    )
+    assert analysis is not None
+    assert "缺少可核对" in (analysis.auto_notes or "")
 
 
 def test_parse_llm_response_handles_code_fence_and_rejects_noise():
@@ -110,6 +191,18 @@ def test_llm_candidate_filter_skips_promotions():
 
     result = _parsed("面试结果通知", "感谢参加面试，结果已出。")
     assert not LLMFallback.should_consider(result, _rejected("主题是结果通知，不是新的安排"))
+
+
+def test_llm_candidate_filter_gives_locally_accepted_promo_a_second_look():
+    accepted = Analysis(
+        accepted=True,
+        classification=Classification(accepted=True, score=5),
+    )
+    promo = _parsed(
+        "招聘日报：最新职位推荐",
+        "本周职位推荐，包含面试机会和最新职位，退订请点击。",
+    )
+    assert LLMFallback.should_consider(promo, accepted)
 
 
 def test_llm_settings_encrypt_key_and_clear(tmp_path):

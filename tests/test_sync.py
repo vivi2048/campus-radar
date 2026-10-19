@@ -196,7 +196,7 @@ def test_llm_is_primary_when_configured(sync_setup):
     assert event["exam_start"] == "2026-10-24T10:00+08:00"
     assert event["platform"] == "腾讯会议"
     assert event["needs_review"] == 1
-    assert "大模型兜底识别" in (event["auto_notes"] or "")
+    assert "大模型识别" in (event["auto_notes"] or "")
 
 
 def test_llm_event_fills_missing_time_from_local_rules(sync_setup):
@@ -236,7 +236,38 @@ def test_llm_event_fills_missing_time_from_local_rules(sync_setup):
     assert event is not None
     assert event["exam_start"] == "2026-10-23T14:00+08:00"
     assert event["exam_time_known"] == 1
-    assert "大模型兜底识别" in (event["auto_notes"] or "")
+    assert "大模型识别" in (event["auto_notes"] or "")
+
+
+def test_llm_rejection_vetoes_locally_accepted_event(sync_setup):
+    db, vault, account, _, _ = sync_setup
+    raw = (FIXTURES / "interview_invite.eml").read_bytes()
+
+    class RejectingLLM:
+        max_calls = 10
+
+        def should_consider(self, parsed, analysis):
+            return True
+
+        def analyze(self, parsed):
+            return None
+
+    service = SyncService(
+        db,
+        vault,
+        logging.getLogger("campus-radar-test-llm-veto"),
+        session_factory=lambda account: FakeSession({1: raw}),
+        llm_factory=lambda: RejectingLLM(),
+    )
+    result = service.sync_account(account["id"])
+    assert result.success
+    assert result.counts["llm_called"] == 1
+    assert result.counts["llm_rejected"] == 1
+    assert result.counts["created"] == 0
+    assert result.counts["matched"] == 0
+    assert db.fetch_one("SELECT * FROM events WHERE company = '远山资本'") is None
+    outcome = db.fetch_one("SELECT outcome FROM seen_messages")
+    assert outcome is not None and outcome["outcome"] == "llm_rejected"
 
 
 def test_llm_error_falls_back_to_local_rules(sync_setup):

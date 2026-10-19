@@ -34,6 +34,9 @@ class ParsedEmail:
     html_text: str
     links: list[EmailLink] = field(default_factory=list)
     message_id: str = ""
+    list_unsubscribe: str = ""
+    precedence: str = ""
+    reply_to: str = ""
 
     @property
     def from_line(self) -> str:
@@ -292,6 +295,9 @@ def parse_raw_email(raw: bytes, fallback_received_at: datetime | None = None) ->
         html_text=html_text,
         links=list(deduped.values()),
         message_id=str(message.get("Message-ID", "")).strip()[:998],
+        list_unsubscribe=_decode_header(message.get("List-Unsubscribe")).strip()[:500],
+        precedence=_decode_header(message.get("Precedence")).strip()[:100],
+        reply_to=_decode_header(message.get("Reply-To")).strip()[:300],
     )
 
 

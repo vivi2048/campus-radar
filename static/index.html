@@ -36,50 +36,20 @@
 
       <nav class="main-nav" aria-label="主导航">
         <button class="nav-item is-active" type="button" data-nav="dashboard">
-          <span class="nav-icon" aria-hidden="true">
-            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round">
-              <rect x="3" y="3" width="7.5" height="7.5" rx="2"/><rect x="13.5" y="3" width="7.5" height="7.5" rx="2"/>
-              <rect x="3" y="13.5" width="7.5" height="7.5" rx="2"/><rect x="13.5" y="13.5" width="7.5" height="7.5" rx="2"/>
-            </svg>
-          </span>
           <span class="nav-text">总览</span>
-          <span class="nav-count" id="nav-count-upcoming" hidden></span>
         </button>
         <button class="nav-item" type="button" data-nav="library">
-          <span class="nav-icon" aria-hidden="true">
-            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round">
-              <rect x="4" y="4" width="16" height="16" rx="3"/><path d="M8 9h8M8 13h8M8 17h5"/>
-            </svg>
-          </span>
           <span class="nav-text">日程</span>
-          <span class="nav-count" id="nav-count-library" hidden></span>
         </button>
         <button class="nav-item" type="button" data-nav="accounts">
-          <span class="nav-icon" aria-hidden="true">
-            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round">
-              <rect x="3" y="5" width="18" height="14" rx="3"/><path d="m4 7 8 6 8-6"/>
-            </svg>
-          </span>
           <span class="nav-text">邮箱</span>
-          <span class="nav-count" id="nav-count-accounts" hidden></span>
+        </button>
+        <button class="nav-item" type="button" data-nav="models">
+          <span class="nav-text">模型</span>
         </button>
       </nav>
 
       <div class="sidebar-spacer"></div>
-
-      <section class="sync-card" aria-label="邮箱同步状态">
-        <div class="sync-status-line">
-          <span class="status-light" id="sync-light" aria-hidden="true"></span>
-          <span class="sync-summary" id="sync-summary">尚未连接邮箱</span>
-        </div>
-        <button class="sidebar-sync-button" id="sidebar-sync-button" type="button" data-action="sync-all">
-          <span id="sidebar-sync-label">连接招聘邮箱</span>
-          <svg class="sync-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
-            <path d="M20 11a8 8 0 1 0-2.3 5.7"/><path d="M20 4v7h-7"/>
-          </svg>
-        </button>
-        <p class="sync-detail" id="sync-detail">授权码只保存在这台电脑上</p>
-      </section>
     </aside>
 
     <div class="sidebar-backdrop" id="sidebar-backdrop" hidden></div>
@@ -90,9 +60,7 @@
           <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"><path d="M4 7h16M4 12h16M4 17h10"/></svg>
         </button>
         <span class="mobile-brand">校招雷达</span>
-        <button class="icon-button" type="button" data-action="sync-all" aria-label="同步邮箱">
-          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M20 11a8 8 0 1 0-2.3 5.7"/><path d="M20 4v7h-7"/></svg>
-        </button>
+        <span class="mobile-header-spacer" aria-hidden="true"></span>
       </header>
 
       <main class="page" id="main" tabindex="-1">

@@ -20,7 +20,7 @@ from .events import find_duplicate_event, merge_into_event
 
 MAX_EMAIL_BYTES = 10 * 1024 * 1024
 RESCHEDULE_RE = re.compile(r"变更|调整|改期|更新|延期|更改", re.IGNORECASE)
-RESCANNABLE_OUTCOMES = {"not_exam", "not_event", "error", "llm_error"}
+RESCANNABLE_OUTCOMES = {"not_exam", "not_event", "llm_rejected", "error", "llm_error"}
 
 SessionFactory = Callable[[MailAccount], MailboxSession]
 
@@ -146,8 +146,8 @@ class SyncService:
                             continue
                         counts["scanned"] += 1
                         analysis = analyze_email(parsed)
-                        llm_attempted = False
                         llm_error = False
+                        should_consider = False
                         if llm is not None:
                             try:
                                 should_consider = llm.should_consider(parsed, analysis)
@@ -155,7 +155,6 @@ class SyncService:
                                 should_consider = False
                             max_calls = int(getattr(llm, "max_calls", 0) or 0)
                             if should_consider and llm_calls < max_calls:
-                                llm_attempted = True
                                 llm_calls += 1
                                 counts["llm_called"] += 1
                                 try:
@@ -180,13 +179,29 @@ class SyncService:
                                     )
                                     counts["llm_matched"] += 1
                                 elif not llm_error:
+                                    # A successful LLM rejection is authoritative and
+                                    # must veto a local false positive.
                                     counts["llm_rejected"] += 1
+                                    counts["skipped"] += 1
+                                    self._record_seen(
+                                        account_id, message_key, "llm_rejected", None
+                                    )
+                                    continue
+                            elif should_consider and analysis.accepted:
+                                note = "本轮大模型调用次数已用完，仅使用本地规则识别，请核对。"
+                                analysis = replace(
+                                    analysis,
+                                    needs_review=True,
+                                    auto_notes=(
+                                        f"{note}\n{analysis.auto_notes}"
+                                        if analysis.auto_notes
+                                        else note
+                                    ),
+                                )
                         if not analysis.accepted or not analysis.fields or not analysis.timing:
                             counts["skipped"] += 1
                             if llm_error:
                                 outcome = "llm_error"
-                            elif llm_attempted:
-                                outcome = "llm_rejected"
                             else:
                                 outcome = "not_event"
                             self._record_seen(account_id, message_key, outcome, None)
