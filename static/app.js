@@ -441,7 +441,7 @@ function eventNoun(event) {
 }
 
 function eventLinkLabel(event) {
-  return isInterviewEvent(event) ? "面试入口" : "考试入口";
+  return isInterviewEvent(event) ? "前往面试" : "前往考试";
 }
 
 function modeLabel(mode) {
@@ -1251,7 +1251,7 @@ function renderLibraryRow(event) {
       <span class="library-status ${status.className}">${escapeHtml(status.label)}</span>
     </button>
     <div class="library-row-actions">
-      ${url ? `<a class="quick-action keep-mobile" href="${escapeHtml(url)}" target="_blank" rel="noopener noreferrer" title="打开${eventLinkLabel(event)}" aria-label="打开${eventLinkLabel(event)}">${icon("external", 14)}</a>` : ""}
+      ${url ? `<a class="quick-action keep-mobile" href="${escapeHtml(url)}" target="_blank" rel="noopener noreferrer" title="${eventLinkLabel(event)}" aria-label="${eventLinkLabel(event)}">${icon("external", 14)}</a>` : ""}
       <button class="quick-action keep-mobile${isDone ? " is-done" : ""}" type="button" data-action="toggle-done" data-id="${event.id}" title="${isDone ? "标记为待参加" : "标记为已完成"}" aria-label="${isDone ? "标记为待参加" : "标记为已完成"}">${icon("check", 14)}</button>
     </div>
   </article>`;
@@ -1840,7 +1840,7 @@ function renderDrawer() {
     <div class="drawer-footer">
       <div class="drawer-footer-actions">
         ${mode === "edit" ? `<button class="button button-ghost button-small is-danger" type="button" data-action="delete-event" data-id="${event.id}">删除</button>
-        ${entryUrl ? `<a class="button button-ghost button-small" href="${escapeHtml(entryUrl)}" target="_blank" rel="noopener noreferrer">${interview ? "前往面试" : "前往考试"}</a>` : ""}` : ""}
+        ${entryUrl ? `<a class="button button-ghost button-small" href="${escapeHtml(entryUrl)}" target="_blank" rel="noopener noreferrer">${eventLinkLabel(event)}</a>` : ""}` : ""}
         <button class="button button-ghost button-small" type="button" data-action="${mode === "edit" ? "cancel-edit" : "close-drawer"}">取消</button>
         <button class="button button-ghost button-small" type="submit" form="event-form" data-submit-event>${mode === "create" ? `添加${KIND_LABELS[kind]}` : "保存修改"}</button>
       </div>
