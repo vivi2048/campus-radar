@@ -119,6 +119,28 @@ def test_manual_interview_event_create_and_kind_switch(client):
     assert invalid.status_code == 400
 
 
+def test_ignore_state_is_cleared_when_status_changes(client):
+    response = client.post("/api/events", json={"company": "忽略测试"})
+    assert response.status_code == 201
+    event = response.json()
+
+    ignored = client.patch(f"/api/events/{event['id']}", json={"ignored": True})
+    assert ignored.status_code == 200
+    assert ignored.json()["status"] == "cancelled"
+    assert ignored.json()["ignored"] is False
+
+    done = client.patch(f"/api/events/{event['id']}", json={"status": "done"})
+    assert done.status_code == 200
+    assert done.json()["status"] == "done"
+    assert done.json()["ignored"] is False
+
+    cancelled = client.patch(f"/api/events/{event['id']}", json={"status": "cancelled"})
+    assert cancelled.json()["status"] == "cancelled"
+    pending = client.patch(f"/api/events/{event['id']}", json={"status": "pending"})
+    assert pending.json()["status"] == "pending"
+    assert pending.json()["ignored"] is False
+
+
 def test_unknown_event_returns_404(client):
     assert client.get("/api/events/9999").status_code == 404
     assert client.patch("/api/events/9999", json={"company": "X"}).status_code == 404

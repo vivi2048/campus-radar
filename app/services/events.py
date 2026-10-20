@@ -260,6 +260,12 @@ def update_event(db: Database, event_id: int, changes: dict[str, Any]) -> dict[s
     if unknown:
         raise EventValidationError(f"不支持修改字段：{', '.join(sorted(unknown))}")
 
+    if "ignored" in changes and "status" not in changes:
+        changes = {
+            **changes,
+            "status": "cancelled" if bool(changes["ignored"]) else "pending",
+        }
+
     values: dict[str, Any] = {}
     manual_fields = set(changes) & AUTO_EDIT_FIELDS
 
@@ -314,8 +320,7 @@ def update_event(db: Database, event_id: int, changes: dict[str, Any]) -> dict[s
         values["access_code"] = _clean_optional_text(changes.get("access_code"), 80)
     if "status" in changes:
         values["status"] = _validate_status(changes.get("status"))
-    if "ignored" in changes:
-        values["ignored"] = int(bool(changes.get("ignored")))
+        values["ignored"] = 0
     if "notes" in changes:
         values["notes"] = _clean_optional_text(changes.get("notes"))
 
@@ -353,7 +358,7 @@ def set_event_status(db: Database, event_id: int, status: str) -> dict[str, Any]
     if not get_raw_event(db, event_id):
         return None
     db.execute(
-        "UPDATE events SET status = ?, updated_at = ? WHERE id = ?",
+        "UPDATE events SET status = ?, ignored = 0, updated_at = ? WHERE id = ?",
         (status, utc_now_iso(), event_id),
     )
     return get_event(db, event_id)

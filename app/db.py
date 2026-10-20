@@ -113,6 +113,10 @@ class Database:
                 "CREATE INDEX IF NOT EXISTS idx_events_kind_start "
                 "ON events (kind, exam_start)"
             )
+            if "ignored" in columns:
+                conn.execute(
+                    "UPDATE events SET status = 'cancelled', ignored = 0 WHERE ignored = 1"
+                )
 
     @contextmanager
     def connection(self) -> Iterator[sqlite3.Connection]:

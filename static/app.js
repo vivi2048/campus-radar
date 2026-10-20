@@ -339,7 +339,7 @@ function parsedDate(value) {
 }
 
 function getPhase(event, now = new Date()) {
-  if (!event || event.ignored) return "ignored";
+  if (!event) return "ignored";
   if (event.status === "done") return "done";
   if (event.status === "cancelled") return "cancelled";
   if (!event.exam_start) return "review";
@@ -366,7 +366,7 @@ function getPhase(event, now = new Date()) {
 }
 
 function isReviewEvent(event) {
-  if (!event || event.status !== "pending" || event.ignored) return false;
+  if (!event || event.status !== "pending") return false;
   const phase = getPhase(event);
   if (phase === "ended") return false;
   return Boolean(event.needs_review || !event.exam_start || !event.exam_time_known);
@@ -375,17 +375,14 @@ function isReviewEvent(event) {
 function isActiveEvent(event) {
   if (!event) return false;
   const phase = getPhase(event);
-  return !event.ignored
-    && event.status === "pending"
+  return event.status === "pending"
     && phase !== "ended"
     && phase !== "done"
-    && phase !== "cancelled"
-    && phase !== "ignored";
+    && phase !== "cancelled";
 }
 
 function isEndedPending(event) {
   return Boolean(event)
-    && !event.ignored
     && event.status === "pending"
     && getPhase(event) === "ended";
 }
@@ -407,9 +404,8 @@ function reviewEvents() {
 
 function statusInfo(event, { showCountdown = true } = {}) {
   const phase = getPhase(event);
-  if (event.ignored) return { label: "已忽略", className: "is-ignored" };
   if (phase === "done") return { label: "已完成", className: "is-done" };
-  if (phase === "cancelled") return { label: "已取消", className: "is-cancelled" };
+  if (phase === "cancelled") return { label: "已忽略", className: "is-cancelled" };
   if (isReviewEvent(event)) return { label: "待确认", className: "is-review" };
   if (phase === "live") return { label: "进行中", className: "is-live" };
   if (phase === "ended") return { label: "已结束", className: "is-ended" };
@@ -763,7 +759,7 @@ function renderDashboard() {
     </header>
     ${renderDemoBanner()}
     ${renderFocusCard(focus, noEvents)}
-    ${noEvents ? renderOnboarding() : (active.length ? renderEventPanel(active) : "")}
+    ${noEvents ? renderOnboarding() : renderEventPanel(active)}
   </div>`;
 }
 
@@ -778,22 +774,19 @@ function displayScheduleText(event) {
 
 function renderFocusCard(event, noEvents) {
   if (!event) {
-    const title = noEvents ? "下一场安排，还在邮箱里。" : "这一轮，先告一段落。";
+    const title = noEvents ? "暂无日程" : "暂无安排";
     const copy = noEvents
-      ? "连接招聘邮箱后，雷达会自动识别笔试和面试邀请、时间、截止确认和入口链接。"
+      ? "连接邮箱后，雷达会自动识别笔试和面试邀请、时间、截止确认和入口链接。"
       : "目前没有待参加的笔试或面试。已完成或已结束的记录，都收在日程里。";
     const actions = noEvents
       ? `<div class="focus-actions">
-          <button class="button button-primary" type="button" data-action="focus-account-form">连接招聘邮箱</button>
+          <button class="button button-primary" type="button" data-action="focus-account-form">连接邮箱</button>
           <button class="button button-ghost" type="button" data-action="load-demo">看看示例</button>
         </div>`
-      : `<div class="focus-actions">
-          <button class="button button-primary" type="button" data-nav="library">打开日程</button>
-          <button class="button button-ghost" type="button" data-action="add-event">手动添加</button>
-        </div>`;
+      : "";
     return `<article class="focus-card">
       <div class="focus-empty">
-        <div class="focus-kicker">CAMPUS-RADAR · 待命</div>
+        <div class="focus-kicker">CAMPUS-RADAR · STANDBY</div>
         <h2>${title}</h2>
         <p>${copy}</p>
         ${actions}
@@ -1044,8 +1037,8 @@ function renderEventPanel(active) {
   return `<section class="panel events-panel">
     <div class="panel-header with-border">
       <div>
-        <div class="eyebrow events-panel-eyebrow">SCHEDULE · EXAMS &amp; INTERVIEWS</div>
-        <h2 class="panel-title">接下来的安排</h2>
+        <div class="eyebrow events-panel-eyebrow">CALENDAR · EXAMS &amp; INTERVIEWS</div>
+        <h2 class="panel-title">校招日历</h2>
       </div>
       <div class="calendar-controls">
         <button class="calendar-nav" type="button" data-action="calendar-prev" aria-label="上个月">${icon("chevronRight", 15, "is-prev")}</button>
@@ -1069,7 +1062,7 @@ function renderOnboarding() {
   return `<section class="panel onboarding-panel">
     <div class="onboarding-intro">
       <div class="eyebrow">HOW IT WORKS</div>
-      <h2>让雷达替你盯着收件箱。</h2>
+      <h2>工作方式</h2>
       <p>笔试和面试邀请常常埋在提醒、测评通知和转发邮件里。这里把它们统一抽出来，只需要你确认少量缺失信息。</p>
     </div>
     <ol class="onboarding-steps">
@@ -1170,8 +1163,8 @@ function renderLibraryResults() {
       { title: "待参加", events: active.filter((event) => !isReviewEvent(event)) },
       { title: "待确认", events: active.filter(isReviewEvent) },
       { title: "已结束", events: events.filter(isEndedPending).sort(sortByExamStart) },
-      { title: "已完成", events: events.filter((event) => !event.ignored && event.status === "done").sort(sortNewestFirst) },
-      { title: "已忽略", events: events.filter((event) => event.ignored || event.status === "cancelled").sort(sortNewestFirst) },
+      { title: "已完成", events: events.filter((event) => event.status === "done").sort(sortNewestFirst) },
+      { title: "已忽略", events: events.filter((event) => event.status === "cancelled").sort(sortNewestFirst) },
     );
   } else if (state.libraryFilter === "upcoming") {
     groups.push({
@@ -1191,12 +1184,12 @@ function renderLibraryResults() {
   } else if (state.libraryFilter === "done") {
     groups.push({
       title: "已完成",
-      events: events.filter((event) => !event.ignored && event.status === "done").sort(sortNewestFirst),
+      events: events.filter((event) => event.status === "done").sort(sortNewestFirst),
     });
   } else if (state.libraryFilter === "ignored") {
     groups.push({
       title: "已忽略",
-      events: events.filter((event) => event.ignored || event.status === "cancelled").sort(sortNewestFirst),
+      events: events.filter((event) => event.status === "cancelled").sort(sortNewestFirst),
     });
   }
 
@@ -1236,7 +1229,7 @@ function renderLibraryResults() {
 function renderLibraryRow(event) {
   const status = statusInfo(event, { showCountdown: false });
   const url = safeHttpUrl(event.exam_url);
-  const dimmed = event.ignored || event.status === "done" || event.status === "cancelled" || getPhase(event) === "ended";
+  const dimmed = event.status === "done" || event.status === "cancelled" || getPhase(event) === "ended";
   const isDone = event.status === "done";
   const deadline = compactDeadlineText(event) || "-";
   const fullDeadlineText = event.deadline ? deadlineText(event, { includeWeekday: true }) : "";
@@ -1292,7 +1285,7 @@ function renderAccounts() {
         <div class="account-list">
           ${state.accounts.length ? state.accounts.map(renderAccountCard).join("") : `<section class="mailbox-explainer">
             <div class="eyebrow">BEFORE YOU CONNECT</div>
-            <h3>还没有连接邮箱</h3>
+            <h3>邮箱未连接</h3>
             <p class="explainer-intro">连接后自动同步，之后可手动刷新或等待定时检查。</p>
             <ul class="explainer-list">
               <li><strong>只读访问</strong>：不标记已读，不发送、不删除。</li>
@@ -1307,7 +1300,7 @@ function renderAccounts() {
         <section class="panel add-account-panel" id="add-account-panel">
           <div class="panel-heading">
             <div class="eyebrow">ADD MAILBOX</div>
-            <h2>连接一个邮箱</h2>
+            <h2>添加邮箱</h2>
           </div>
           ${renderAccountForm()}
         </section>
@@ -1395,23 +1388,20 @@ function renderAccountCard(account) {
       <div class="account-label">${escapeHtml(label)}${showProviderTag ? `<span class="account-tag">${escapeHtml(providerLabel)}</span>` : ""}</div>
       <div class="account-email">${escapeHtml(account.email)}${account.folder && account.folder !== "INBOX" ? ` · ${escapeHtml(account.folder)}` : ""}</div>
     </div>
-    <div class="account-toolbar">
-      <button class="button button-ghost button-small" type="button" data-action="sync-account" data-id="${account.id}" ${isSyncing ? "disabled" : ""}>${isSyncing ? "同步中…" : account.last_sync_status === "error" ? "重试同步" : "立即同步"}</button>
-      <button class="button button-ghost button-small is-danger" type="button" data-action="delete-account" data-id="${account.id}">移除邮箱</button>
-    </div>
     <div class="account-status ${status.className}">
       <span>${escapeHtml(status.text)}${status.detail ? ` · ${escapeHtml(status.detail)}` : ""}</span>
     </div>
     ${account.last_sync_status === "error" && account.last_sync_error ? `<div class="account-error">${escapeHtml(account.last_sync_error)}</div>` : ""}
+    <div class="account-toolbar">
+      <button class="button button-ghost button-small" type="button" data-action="sync-account" data-id="${account.id}" ${isSyncing ? "disabled" : ""}>${isSyncing ? "同步中…" : account.last_sync_status === "error" ? "重试同步" : "立即同步"}</button>
+      <button class="button button-ghost button-small is-danger" type="button" data-action="delete-account" data-id="${account.id}">移除邮箱</button>
+    </div>
   </article>`;
 }
 
 function renderAccountForm() {
   const provider = providerById(state.providerId);
   const authLabel = provider?.auth_label || "授权码 / 密码";
-  const passwordPlaceholder = provider
-    ? (provider.custom ? "密码或授权码" : `粘贴 ${provider.auth_label}`)
-    : "粘贴授权码或密码";
 
   return `<form id="account-form">
     <div class="form-grid">
@@ -1426,13 +1416,13 @@ function renderAccountForm() {
       <div class="form-field is-full">
         <label class="field-label" for="account-password"><span data-auth-label>${escapeHtml(authLabel)}</span><span class="required">*</span></label>
         <div class="password-wrap">
-          <input class="input" id="account-password" name="password" type="password" placeholder="${escapeHtml(passwordPlaceholder)}" autocomplete="new-password" required>
+          <input class="input" id="account-password" name="password" type="password" autocomplete="new-password" required>
           <button class="password-toggle" type="button" data-action="toggle-password" data-target="account-password" data-show-label="显示授权码" data-hide-label="隐藏授权码" aria-label="显示授权码">${icon("eyeOff", 15)}</button>
         </div>
       </div>
       <div class="form-field">
         <label class="field-label" for="account-label">备注名称</label>
-        <input class="input" id="account-label" name="label" type="text" placeholder="例如：主投递邮箱" maxlength="80">
+        <input class="input" id="account-label" name="label" type="text" maxlength="80">
       </div>
       <div class="form-field">
         <label class="field-label" for="account-sync-days">首次同步范围</label>
@@ -1483,9 +1473,6 @@ function updateProviderUI(providerId, { initial = false } = {}) {
   if (authLabel) authLabel.textContent = provider?.auth_label || "授权码 / 密码";
   const password = document.getElementById("account-password");
   if (!password) return;
-  password.placeholder = provider
-    ? (provider.custom ? "密码或授权码" : `粘贴 ${provider.auth_label}`)
-    : "粘贴授权码或密码";
   if (!initial && provider && !provider.custom && previousId !== provider.id) password.value = "";
 }
 
@@ -1513,7 +1500,6 @@ function blankEvent() {
     location: "",
     access_code: "",
     status: "pending",
-    ignored: false,
     needs_review: false,
     manually_edited: false,
     auto_notes: null,
@@ -1836,7 +1822,7 @@ function renderDrawer() {
                 <select class="select" id="event-status" name="status">
                   <option value="pending" ${statusValue === "pending" ? "selected" : ""}>待参加</option>
                   <option value="done" ${statusValue === "done" ? "selected" : ""}>已完成</option>
-                  <option value="cancelled" ${statusValue === "cancelled" ? "selected" : ""}>已取消</option>
+                  <option value="cancelled" ${statusValue === "cancelled" ? "selected" : ""}>已忽略</option>
                 </select>
               </div>
               <div class="form-field is-full">
@@ -1854,8 +1840,7 @@ function renderDrawer() {
     <div class="drawer-footer">
       <div class="drawer-footer-actions">
         ${mode === "edit" ? `<button class="button button-ghost button-small is-danger" type="button" data-action="delete-event" data-id="${event.id}">删除</button>
-        ${entryUrl ? `<a class="button button-ghost button-small" href="${escapeHtml(entryUrl)}" target="_blank" rel="noopener noreferrer">${interview ? "前往面试" : "前往考试"}</a>` : ""}
-        <button class="button button-ghost button-small" type="button" data-action="toggle-ignore" data-id="${event.id}">${event.ignored ? "恢复显示" : "忽略"}</button>` : ""}
+        ${entryUrl ? `<a class="button button-ghost button-small" href="${escapeHtml(entryUrl)}" target="_blank" rel="noopener noreferrer">${interview ? "前往面试" : "前往考试"}</a>` : ""}` : ""}
         <button class="button button-ghost button-small" type="button" data-action="${mode === "edit" ? "cancel-edit" : "close-drawer"}">取消</button>
         <button class="button button-ghost button-small" type="submit" form="event-form" data-submit-event>${mode === "create" ? `添加${KIND_LABELS[kind]}` : "保存修改"}</button>
       </div>
@@ -2080,20 +2065,6 @@ async function toggleEventDone(eventId, button = null) {
   } finally {
     state.quickBusy.delete(event.id);
     if (button && document.contains(button)) button.disabled = false;
-  }
-}
-
-async function toggleIgnoreEvent(eventId) {
-  const event = state.drawer?.event || state.events.find((item) => item.id === Number(eventId));
-  if (!event) return;
-  const next = !event.ignored;
-  try {
-    await api(`/api/events/${event.id}`, { method: "PATCH", body: { ignored: next } });
-    closeDrawer();
-    await refreshData();
-    showToast(next ? "已忽略这条记录" : "已恢复显示", next ? "info" : "success");
-  } catch (error) {
-    showToast(error.message, "error");
   }
 }
 
@@ -2554,9 +2525,6 @@ function handleDocumentClick(event) {
       break;
     case "toggle-done":
       if (id) toggleEventDone(Number(id), actionTarget);
-      break;
-    case "toggle-ignore":
-      if (id) toggleIgnoreEvent(Number(id));
       break;
     case "delete-event":
       if (id) deleteEventPermanently(Number(id));
