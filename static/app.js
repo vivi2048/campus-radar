@@ -82,6 +82,7 @@ const state = {
   libraryQuery: "",
   calendarMonth: null,
   calendarSelectedKey: null,
+  calendarPinnedKey: null,
   drawer: null,
   drawerCloseTimer: null,
   drawerLastFocus: null,
@@ -766,6 +767,15 @@ function renderDashboard() {
   </div>`;
 }
 
+function displayScheduleText(event) {
+  if (!event.exam_start) return "-";
+  const start = beijingInfo(event.exam_start);
+  if (!start) return "-";
+  const date = `${start.month}月${start.day}日 ${start.weekdayName}`;
+  const range = timeRangeText(event);
+  return range ? `${date} · ${range}` : `${date} · -`;
+}
+
 function renderFocusCard(event, noEvents) {
   if (!event) {
     const title = noEvents ? "下一场安排，还在邮箱里。" : "这一轮，先告一段落。";
@@ -793,14 +803,17 @@ function renderFocusCard(event, noEvents) {
 
   const countdown = focusCountdown(event);
   const url = safeHttpUrl(event.exam_url);
+  const companyText = event.company || "-";
+  const roleText = [event.role, event.interview_round].filter(Boolean).join(" · ") || "-";
+  const schedule = displayScheduleText(event);
   const secondMetaLabel = event.deadline
     ? (isInterviewEvent(event) ? "确认截止" : "截止时间")
     : (event.duration_minutes
       ? (isInterviewEvent(event) ? "面试时长" : "作答时长")
       : (isInterviewEvent(event) ? "面试形式" : "考试形式"));
   const secondMetaValue = event.deadline
-    ? deadlineText(event, { includeWeekday: false })
-    : (event.duration_minutes ? `${event.duration_minutes} 分钟` : (modeLabel(event.mode) || "待确认"));
+    ? (deadlineText(event, { includeWeekday: false }) || "-")
+    : (event.duration_minutes ? `${event.duration_minutes} 分钟` : (modeLabel(event.mode) || "-"));
 
   return `<article class="focus-card">
     <div class="focus-kicker">
@@ -808,8 +821,8 @@ function renderFocusCard(event, noEvents) {
     </div>
     <div class="focus-main">
       <div>
-        <div class="focus-company">${escapeHtml(displayCompany(event))}</div>
-        <div class="focus-role">${escapeHtml(displayRole(event))}</div>
+        <div class="focus-company">${escapeHtml(companyText)}</div>
+        <div class="focus-role">${escapeHtml(roleText)}</div>
       </div>
       <div class="focus-countdown${countdown.text ? " is-text" : ""}">
         <strong>${escapeHtml(countdown.primary)}</strong>
@@ -820,7 +833,7 @@ function renderFocusCard(event, noEvents) {
       <div class="focus-meta">
         <div class="focus-meta-item">
           <span>${eventNoun(event)}时间</span>
-          <strong>${escapeHtml(scheduleText(event))}</strong>
+          <strong>${escapeHtml(schedule)}</strong>
         </div>
         <div class="focus-meta-item">
           <span>${escapeHtml(secondMetaLabel)}</span>
@@ -831,7 +844,7 @@ function renderFocusCard(event, noEvents) {
         <a class="button button-ghost" href="${escapeHtml(url)}" target="_blank" rel="noopener noreferrer">${eventLinkLabel(event)}</a>
       </div>` : ""}
     </div>
-    <button class="focus-card-hit" type="button" data-action="open-event" data-id="${event.id}" aria-label="查看 ${escapeHtml(displayCompany(event))} ${escapeHtml(displayRole(event))} ${eventNoun(event)}详情"></button>
+    <button class="focus-card-hit" type="button" data-action="open-event" data-id="${event.id}" aria-label="编辑 ${escapeHtml(displayCompany(event))} ${escapeHtml(displayRole(event))} ${eventNoun(event)}"></button>
   </article>`;
 }
 
@@ -896,6 +909,9 @@ function ensureCalendarState(active) {
   if (!state.calendarSelectedKey || !state.calendarSelectedKey.startsWith(`${state.calendarMonth}-`)) {
     state.calendarSelectedKey = defaultCalendarSelection(state.calendarMonth, eventsByDay, today);
   }
+  if (state.calendarPinnedKey && !state.calendarPinnedKey.startsWith(`${state.calendarMonth}-`)) {
+    state.calendarPinnedKey = null;
+  }
   return eventsByDay;
 }
 
@@ -906,7 +922,31 @@ function selectCalendarDay(key) {
   const day = document.querySelector(`.calendar-day[data-calendar-day="${key}"]`);
   if (day) day.classList.add("is-selected");
   const agenda = document.getElementById("calendar-agenda");
-  if (agenda) agenda.innerHTML = renderCalendarAgenda(key, groupEventsByDay(activeEvents()));
+  const content = agenda?.querySelector(".calendar-agenda-inner");
+  if (!content) return;
+  content.innerHTML = renderCalendarAgenda(key, groupEventsByDay(activeEvents()));
+  if (typeof content.animate !== "function") return;
+  if (window.matchMedia("(prefers-reduced-motion: reduce)").matches) return;
+  if (content.getAnimations().length) return;
+  content.animate(
+    [{ opacity: 0.8 }, { opacity: 1 }],
+    { duration: 300, easing: "ease-in-out" },
+  );
+}
+
+function setCalendarPinnedKey(key) {
+  state.calendarPinnedKey = key || null;
+  document.querySelectorAll(".calendar-day.is-pinned").forEach((node) => node.classList.remove("is-pinned"));
+  if (state.calendarPinnedKey) {
+    document.querySelector(`.calendar-day[data-calendar-day="${state.calendarPinnedKey}"]`)?.classList.add("is-pinned");
+  }
+}
+
+function resetCalendarToToday() {
+  const today = todayKey();
+  state.calendarMonth = today.slice(0, 7);
+  state.calendarSelectedKey = today;
+  state.calendarPinnedKey = null;
 }
 
 function shiftCalendarMonth(delta) {
@@ -924,6 +964,7 @@ function refreshEventPanel() {
 }
 
 function handleCalendarPointer(event) {
+  if (state.calendarPinnedKey) return;
   const target = event.target instanceof Element ? event.target.closest("[data-calendar-day]") : null;
   if (!target) return;
   selectCalendarDay(target.dataset.calendarDay);
@@ -947,13 +988,14 @@ function renderCalendarGrid(monthKey, eventsByDay, selectedKey) {
       "calendar-day",
       isToday ? "is-today" : "",
       key === selectedKey ? "is-selected" : "",
+      key === state.calendarPinnedKey ? "is-pinned" : "",
       dayEvents.length ? "has-events" : "",
     ].filter(Boolean).join(" ");
     const dots = dayEvents.slice(0, 3)
       .map((event) => `<span class="calendar-dot is-${eventKind(event)}"></span>`)
       .join("");
     const more = dayEvents.length > 3 ? `<span class="calendar-more">+${dayEvents.length - 3}</span>` : "";
-    const label = `${info.month}月${info.day}日 ${info.weekdayName}，${dayEvents.length ? `${dayEvents.length} 场安排` : "无安排"}`;
+    const label = `${info.month}月${info.day}日 ${info.weekdayName}${dayEvents.length ? `，${dayEvents.length} 场安排` : ""}`;
     cells.push(`<button class="${classes}" type="button" data-calendar-day="${key}" aria-label="${escapeHtml(label)}"${isToday ? ' aria-current="date"' : ""}>
       <span class="calendar-day-number">${day}</span>
       <span class="calendar-day-dots">${dots}${more}</span>
@@ -971,7 +1013,7 @@ function renderCalendarGrid(monthKey, eventsByDay, selectedKey) {
 function renderCalendarEvent(event) {
   const role = String(event.role || "").trim();
   const time = cardScheduleText(event);
-  return `<button class="calendar-event" type="button" data-action="open-event" data-id="${event.id}" aria-label="查看 ${escapeHtml(displayCompany(event))} ${role ? `${escapeHtml(role)} ` : ""}${eventNoun(event)}详情">
+  return `<button class="calendar-event" type="button" data-action="open-event" data-id="${event.id}" aria-label="编辑 ${escapeHtml(displayCompany(event))} ${role ? `${escapeHtml(role)} ` : ""}${eventNoun(event)}">
       <span class="calendar-event-head">
         ${kindMark(event)}
         <span class="calendar-event-company">${escapeHtml(displayCompany(event))}</span>
@@ -986,11 +1028,9 @@ function renderCalendarEvent(event) {
 function renderCalendarAgenda(key, eventsByDay) {
   const info = calendarDayInfo(key);
   const events = eventsByDay.get(key) || [];
-  const count = events.length ? `${events.length} 场` : "无安排";
   const isToday = key === todayKey();
   return `<div class="calendar-agenda-head">
       <div class="calendar-agenda-date">${info.month}月${info.day}日 <span>${info.weekdayName}${isToday ? " · 今天" : ""}</span></div>
-      <span class="calendar-agenda-count">${count}</span>
     </div>
     ${events.length
       ? `<div class="calendar-agenda-list">${events.map(renderCalendarEvent).join("")}</div>`
@@ -1004,14 +1044,13 @@ function renderEventPanel(active) {
   return `<section class="panel events-panel">
     <div class="panel-header with-border">
       <div>
+        <div class="eyebrow events-panel-eyebrow">SCHEDULE · EXAMS &amp; INTERVIEWS</div>
         <h2 class="panel-title">接下来的安排</h2>
-        <p class="panel-subtitle">共 ${active.length} 场 · 悬停或点击日期查看当天安排</p>
       </div>
       <div class="calendar-controls">
         <button class="calendar-nav" type="button" data-action="calendar-prev" aria-label="上个月">${icon("chevronRight", 15, "is-prev")}</button>
         <span class="calendar-month">${calendarMonthLabel(month)}</span>
         <button class="calendar-nav" type="button" data-action="calendar-next" aria-label="下个月">${icon("chevronRight", 15)}</button>
-        <button class="text-button calendar-all" type="button" data-nav="library">全部 ${active.length} 场</button>
       </div>
     </div>
     <div class="calendar-layout">
@@ -1020,7 +1059,7 @@ function renderEventPanel(active) {
         ${undated ? `<p class="calendar-undated">另有 ${undated} 场时间待确认，未显示在日历中。</p>` : ""}
       </div>
       <aside class="calendar-agenda" id="calendar-agenda" aria-live="polite">
-        ${renderCalendarAgenda(state.calendarSelectedKey, eventsByDay)}
+        <div class="calendar-agenda-inner">${renderCalendarAgenda(state.calendarSelectedKey, eventsByDay)}</div>
       </aside>
     </div>
   </section>`;
@@ -1084,7 +1123,7 @@ function renderLibrary() {
         </div>
         <label class="search-field">
           ${icon("search", 15)}
-          <input class="search-input" id="library-search" type="search" placeholder="搜索公司、岗位或平台" autocomplete="off" value="${escapeHtml(state.libraryQuery)}" aria-label="搜索日程">
+          <input class="search-input" id="library-search" type="search" placeholder="搜索公司或岗位" autocomplete="off" value="${escapeHtml(state.libraryQuery)}" aria-label="搜索日程">
         </label>
       </div>
     </div>
@@ -1108,7 +1147,6 @@ function matchesSearch(event, query) {
     event.company,
     event.role,
     event.interview_round,
-    event.platform,
     event.source_subject,
     event.notes,
     event.location,
@@ -1211,7 +1249,7 @@ function renderLibraryRow(event) {
   const companyName = event.company || "-";
   const roleText = [event.role, event.interview_round].filter(Boolean).join(" · ") || "-";
   return `<article class="library-row${dimmed ? " is-dimmed" : ""}" data-event-id="${event.id}">
-    <button class="library-row-main" type="button" data-action="open-event" data-id="${event.id}" aria-label="查看 ${escapeHtml(displayCompany(event))} ${escapeHtml(displayRole(event))} ${eventNoun(event)}详情">
+    <button class="library-row-main" type="button" data-action="open-event" data-id="${event.id}" aria-label="编辑 ${escapeHtml(displayCompany(event))} ${escapeHtml(displayRole(event))} ${eventNoun(event)}">
       <span class="library-company" title="${escapeHtml(companyName)}">${escapeHtml(companyName)}</span>
       <span class="library-role" title="${escapeHtml(roleText)}">${escapeHtml(roleText)}</span>
       <span class="library-type">${kindMark(event)}</span>
@@ -1318,7 +1356,7 @@ function renderAISettingsPanel() {
         <div class="form-field">
           <label class="field-label" for="ai-api-key">API Key</label>
           <div class="password-wrap">
-            <input class="input" id="ai-api-key" name="api_key" type="password" placeholder="${hasKey ? "已保存，留空不修改" : "sk-..."}" autocomplete="new-password">
+            <input class="input" id="ai-api-key" name="api_key" type="password" placeholder="${hasKey ? "已保存，留空不修改" : ""}" autocomplete="new-password">
             <button class="password-toggle" type="button" data-action="toggle-password" data-target="ai-api-key" data-show-label="显示 API Key" data-hide-label="隐藏 API Key" aria-label="显示 API Key">${icon("eyeOff", 15)}</button>
           </div>
         </div>
@@ -1562,6 +1600,7 @@ async function openEventDrawer(id = null, { create = false } = {}) {
     if (!state.drawer || state.drawer.token !== token) return;
     state.drawer.event = event;
     state.drawer.loading = false;
+    state.drawer.editing = true;
     renderDrawer();
     focusDrawer();
   } catch (error) {
@@ -1576,7 +1615,7 @@ function closeDrawer({ restoreFocus = true } = {}) {
   if (!state.drawer) return;
   const lastFocus = state.drawerLastFocus;
   state.drawer = null;
-  el.drawer.classList.remove("is-open");
+  el.drawer.classList.remove("is-open", "is-editing-wide");
   el.drawerScrim.classList.remove("is-visible");
   document.body.classList.remove("drawer-open");
   if (state.drawerCloseTimer) window.clearTimeout(state.drawerCloseTimer);
@@ -1597,23 +1636,20 @@ function focusDrawer() {
   el.drawer.querySelector("[data-action='close-drawer']")?.focus({ preventScroll: true });
 }
 
-function focusDrawerEditor() {
-  el.drawer.querySelector("#event-company")?.focus({ preventScroll: true });
-}
-
 function drawerHeaderMarkup(event, mode, loading, error) {
   const kind = eventKind(event);
   const title = error
     ? "读取失败"
-    : (mode === "create" ? `新的${KIND_LABELS[kind]}` : (event?.company || `${KIND_LABELS[kind]}详情`));
+    : (mode === "create" ? `新的${KIND_LABELS[kind]}` : (event?.company || "-"));
+  const roleDetail = [event?.role, event?.interview_round].filter(Boolean).join(" · ") || "-";
   const role = error
-    ? "请关闭后重试"
-    : (loading ? "正在读取邮件记录…" : (mode === "create" ? "手动补一条记录" : (event?.role || "岗位未注明")));
+    ? "请重试"
+    : (loading ? "正在读取邮件记录…" : (mode === "create" ? "手动补一条记录" : roleDetail));
   const kicker = mode === "create"
-    ? "MANUAL ENTRY · 手动添加"
+    ? "MANUAL ENTRY"
     : (event?.is_demo
-      ? "DEMO · 示例记录"
-      : (kind === "interview" ? "INTERVIEW DETAIL · 面试详情" : "EXAM DETAIL · 笔试详情"));
+      ? "DEMO"
+      : (kind === "interview" ? "INTERVIEW DETAIL" : "EXAM DETAIL"));
   return `<div class="drawer-header">
     <div class="drawer-heading">
       <div class="drawer-kicker" data-kind-kicker>${kicker}</div>
@@ -1626,118 +1662,33 @@ function drawerHeaderMarkup(event, mode, loading, error) {
   </div>`;
 }
 
-function renderEventDetail(event) {
-  const kind = eventKind(event);
-  const interview = kind === "interview";
-  const status = statusInfo(event);
-  const url = safeHttpUrl(event.exam_url);
-  const needsReview = isReviewEvent(event);
-  const autoNotes = String(event.auto_notes || "").split("\n").map((line) => line.trim()).filter(Boolean);
-  const userNotes = String(event.notes || "").trim();
+function renderSourceMail(event) {
   const sourceBody = event.source_body || "";
   const sourceMeta = [event.source_sender, event.source_received_at ? formatMailTimestamp(event.source_received_at) : ""].filter(Boolean).join(" · ");
   const sourceCount = Number(event.source_count || 1);
-  const metaItems = [
-    `<span class="status-chip ${status.className}">${escapeHtml(status.label)}</span>`,
-    (event.auto_notes || "").includes("大模型") ? `<span class="drawer-meta-text is-ai">${icon("sparkle", 12)}AI 识别</span>` : "",
-    event.is_demo ? `<span class="drawer-meta-text">示例数据</span>` : "",
-  ].filter(Boolean).join("");
-  const entryLink = url
-    ? `<a class="drawer-entry-link" href="${escapeHtml(url)}" target="_blank" rel="noopener noreferrer">${icon("external", 12)}打开${eventLinkLabel(event)}</a>`
-    : "";
-  const facts = [
-    { label: `${eventNoun(event)}时间`, value: scheduleText(event) },
-  ];
-  if (event.deadline) {
-    const hint = deadlineHint(event);
-    facts.push({
-      label: isInterviewEvent(event) ? "确认截止" : "截止时间",
-      value: `${deadlineText(event, { includeWeekday: true })}${hint && hint !== "未注明" ? ` · ${hint}` : ""}`,
-    });
-  }
-  if (event.duration_minutes) {
-    facts.push({
-      label: isInterviewEvent(event) ? "面试时长" : "作答时长",
-      value: `${event.duration_minutes} 分钟`,
-    });
-  }
-  const platform = [event.platform, modeLabel(event.mode)].filter(Boolean).join(" · ");
-  if (platform) {
-    facts.push({ label: isInterviewEvent(event) ? "面试平台" : "考试平台", value: platform });
-  }
-  if (event.location) {
-    facts.push({ label: isInterviewEvent(event) ? "面试地点" : "考试地点", value: event.location, full: true });
-  }
-  if (event.access_code) {
-    facts.push({
-      label: isInterviewEvent(event) ? "会议号 / 密码" : "口令 / 邀请码",
-      value: event.access_code,
-      full: true,
-    });
-  }
-  const footerLeft = `<div class="drawer-footer-left">
-    <button class="text-button is-danger" type="button" data-action="delete-event" data-id="${event.id}">删除</button>
-    <button class="text-button" type="button" data-action="toggle-ignore" data-id="${event.id}">${event.ignored ? "恢复显示" : "忽略这条"}</button>
-  </div>`;
-
-  el.drawer.innerHTML = `${drawerHeaderMarkup(event, "edit", false, null)}
-    <div class="drawer-scroll">
-      <div class="drawer-body drawer-detail">
-        <div class="drawer-meta">
-          <div class="drawer-meta-main">${metaItems}</div>
-          ${entryLink}
-        </div>
-        ${needsReview ? `<div class="drawer-alert">${icon("alert", 14)}<span>${escapeHtml(reviewReason(event))}。点“编辑”补全后保存，就会从待确认里移出。</span></div>` : ""}
-        <section class="detail-section">
-          <h3 class="drawer-section-title">日程信息</h3>
-          <dl class="detail-facts">
-            ${facts.map((fact) => `<div class="detail-fact${fact.full ? " is-full" : ""}">
-              <dt>${escapeHtml(fact.label)}</dt>
-              <dd>${escapeHtml(fact.value)}</dd>
-            </div>`).join("")}
-          </dl>
-        </section>
-        ${userNotes ? `<section class="detail-section">
-          <h3 class="drawer-section-title">我的备注</h3>
-          <p class="detail-notes">${escapeHtml(userNotes)}</p>
-        </section>` : ""}
-        ${autoNotes.length ? `<section class="detail-section">
-          <div class="drawer-section-head">
-            <h3 class="drawer-section-title">邮件提醒</h3>
-            <span class="drawer-section-note">${autoNotes.length} 条</span>
-          </div>
-          <ul class="note-list">${autoNotes.map((line) => `<li>${escapeHtml(line.replace(/^[-•·]\s*/, ""))}</li>`).join("")}</ul>
-        </section>` : ""}
-        <section class="detail-section detail-source">
-          <div class="drawer-section-head">
-            <h3 class="drawer-section-title">来源邮件</h3>
-            ${sourceCount > 1 ? `<span class="drawer-section-note">合并了 ${sourceCount} 封相关邮件</span>` : ""}
-          </div>
-          ${event.source_subject ? `<div class="source-mail">
-            <div class="source-mail-head">
-              <span class="source-mail-icon">${icon("mail", 14)}</span>
-              <span class="source-summary-copy">
-                <span class="source-subject">${escapeHtml(event.source_subject)}</span>
-                <span class="source-meta">${escapeHtml(sourceMeta || "未知发件人")}</span>
-              </span>
-            </div>
-            <pre class="source-body">${escapeHtml(sourceBody || "这封邮件没有可显示的纯文本内容。")}</pre>
-          </div>` : `<div class="source-empty">这条记录没有保留来源邮件正文。</div>`}
-        </section>
-      </div>
+  return `<section class="source-pane-inner">
+    <div class="drawer-section-head">
+      <h3 class="drawer-section-title">来源邮件</h3>
+      ${sourceCount > 1 ? `<span class="drawer-section-note">合并了 ${sourceCount} 封相关邮件</span>` : ""}
     </div>
-    <div class="drawer-footer">
-      ${footerLeft}
-      <div class="drawer-footer-actions">
-        <button class="button button-ghost" type="button" data-action="close-drawer">关闭</button>
-        <button class="button button-primary" type="button" data-action="edit-event">编辑</button>
+    ${event.source_subject ? `<div class="source-mail">
+      <div class="source-mail-head">
+        <span class="source-mail-icon">${icon("mail", 14)}</span>
+        <span class="source-summary-copy">
+          <span class="source-subject">${escapeHtml(event.source_subject)}</span>
+          <span class="source-meta">${escapeHtml(sourceMeta || "-")}</span>
+        </span>
       </div>
-    </div>`;
+      <pre class="source-body">${escapeHtml(sourceBody || "这封邮件没有可显示的纯文本内容。")}</pre>
+    </div>` : `<div class="source-empty">这条记录没有保留来源邮件正文。</div>`}
+  </section>`;
 }
 
 function renderDrawer() {
   if (!state.drawer) return;
   const { event, mode, loading, error } = state.drawer;
+  const hasSource = Boolean(event?.source_subject || event?.source_body);
+  el.drawer.classList.toggle("is-editing-wide", Boolean(state.drawer.editing && hasSource));
 
   if (loading) {
     el.drawer.innerHTML = `${drawerHeaderMarkup(event, mode, true, null)}
@@ -1763,20 +1714,11 @@ function renderDrawer() {
           <p>${escapeHtml(error)}</p>
           <button class="button button-ghost button-small" type="button" data-action="retry-drawer">重试</button>
         </div>
-      </div>
-      <div class="drawer-footer">
-        <div class="drawer-footer-actions">
-          <button class="button button-ghost" type="button" data-action="close-drawer">关闭</button>
-        </div>
       </div>`;
     return;
   }
 
   if (!event) return;
-  if (!state.drawer.editing) {
-    renderEventDetail(event);
-    return;
-  }
   const kind = eventKind(event);
   const interview = kind === "interview";
   const modeValue = event.mode || "unknown";
@@ -1787,58 +1729,43 @@ function renderDrawer() {
   const deadlineDate = dateInputValue(event.deadline);
   const deadlineTime = timeInputValue(event.deadline, event.deadline_time_known);
   const needsReview = mode === "edit" && isReviewEvent(event);
-
-  const footerLeft = mode === "edit"
-    ? `<div class="drawer-footer-left">
-        <button class="text-button is-danger" type="button" data-action="delete-event" data-id="${event.id}">删除</button>
-        <button class="text-button" type="button" data-action="toggle-ignore" data-id="${event.id}">${event.ignored ? "恢复显示" : "忽略这条"}</button>
-      </div>`
-    : "";
+  const entryUrl = safeHttpUrl(event.exam_url);
+  const showSourcePane = mode === "edit" && Boolean(event.source_subject || event.source_body);
+  const sourcePane = showSourcePane ? `<aside class="source-pane">${renderSourceMail(event)}</aside>` : "";
 
   el.drawer.innerHTML = `${drawerHeaderMarkup(event, mode, false, null)}
     <div class="drawer-scroll">
-      <div class="drawer-body">
+      <div class="drawer-body${showSourcePane ? " edit-layout" : ""}">
+        <div class="edit-form-column">
         ${needsReview ? `<div class="drawer-alert">${icon("alert", 14)}<span>${escapeHtml(reviewReason(event))}。补全后保存，就会从待确认里移出。</span></div>` : ""}
         <form id="event-form" data-event-id="${event.id || ""}" data-mode="${mode}">
           <section class="drawer-section">
-            <div class="drawer-section-head">
-              <h3 class="drawer-section-title">基本信息</h3>
-            </div>
             <div class="form-grid">
               <div class="form-field">
-                <span class="field-label" id="event-kind-label">记录类型</span>
-                <div class="segmented" role="radiogroup" aria-labelledby="event-kind-label">
-                  <label class="segmented-option">
-                    <input type="radio" name="kind" value="exam" ${kind === "exam" ? "checked" : ""}>
-                    <span>笔试 / 测评</span>
-                  </label>
-                  <label class="segmented-option">
-                    <input type="radio" name="kind" value="interview" ${kind === "interview" ? "checked" : ""}>
-                    <span>面试</span>
-                  </label>
-                </div>
+                <label class="field-label" for="event-kind">记录类型</label>
+                <select class="select" id="event-kind" name="kind">
+                  <option value="exam" ${kind === "exam" ? "selected" : ""}>笔试 / 测评</option>
+                  <option value="interview" ${kind === "interview" ? "selected" : ""}>面试</option>
+                </select>
               </div>
               <div class="form-field" data-interview-round-field ${interview ? "" : "hidden"}>
                 <label class="field-label" for="event-round">面试轮次</label>
-                <input class="input" id="event-round" name="interview_round" type="text" value="${escapeHtml(event.interview_round || "")}" placeholder="一面 / 二面 / HR 面" maxlength="20">
+                <input class="input" id="event-round" name="interview_round" type="text" value="${escapeHtml(event.interview_round || "")}" maxlength="20">
               </div>
             </div>
             <div class="form-grid">
               <div class="form-field">
                 <label class="field-label" for="event-company">公司<span class="required">*</span></label>
-                <input class="input" id="event-company" name="company" type="text" value="${escapeHtml(event.company || "")}" placeholder="例如：字节跳动" maxlength="100" required>
+                <input class="input" id="event-company" name="company" type="text" value="${escapeHtml(event.company || "")}" maxlength="100" required>
               </div>
               <div class="form-field">
                 <label class="field-label" for="event-role">岗位</label>
-                <input class="input" id="event-role" name="role" type="text" value="${escapeHtml(event.role || "")}" placeholder="例如：后端开发工程师" maxlength="100">
+                <input class="input" id="event-role" name="role" type="text" value="${escapeHtml(event.role || "")}" maxlength="100">
               </div>
             </div>
           </section>
 
           <section class="drawer-section">
-            <div class="drawer-section-head">
-              <h3 class="drawer-section-title" data-kind-label-exam="考试时间" data-kind-label-interview="面试时间">${interview ? "面试时间" : "考试时间"}</h3>
-            </div>
             <div class="form-grid is-3">
               <div class="form-field">
                 <label class="field-label" for="event-exam-date" data-kind-label-exam="考试日期" data-kind-label-interview="面试日期">${interview ? "面试日期" : "考试日期"}</label>
@@ -1864,94 +1791,73 @@ function renderDrawer() {
               </div>
               <div class="form-field">
                 <label class="field-label" for="event-duration"><span data-kind-label-exam="作答时长" data-kind-label-interview="面试时长">${interview ? "面试时长" : "作答时长"}</span><span class="field-suffix">分钟</span></label>
-                <input class="input" id="event-duration" name="duration_minutes" type="number" min="1" max="1440" value="${event.duration_minutes ?? ""}" placeholder="${interview ? "例如 45" : "例如 120"}">
+                <input class="input" id="event-duration" name="duration_minutes" type="number" min="1" max="1440" value="${event.duration_minutes ?? ""}">
               </div>
             </div>
           </section>
 
           <section class="drawer-section">
-            <div class="drawer-section-head">
-              <h3 class="drawer-section-title" data-kind-label-exam="考试入口" data-kind-label-interview="面试入口">${interview ? "面试入口" : "考试入口"}</h3>
-              <span class="drawer-section-note">链接和会议信息仅保存在本机</span>
-            </div>
             <div class="form-grid">
               <div class="form-field">
                 <label class="field-label" for="event-platform" data-kind-label-exam="考试平台" data-kind-label-interview="面试平台">${interview ? "面试平台" : "考试平台"}</label>
-                <input class="input" id="event-platform" name="platform" type="text" value="${escapeHtml(event.platform || "")}" placeholder="${interview ? "腾讯会议 / Zoom / 飞书" : "牛客 / 赛码 / HackerRank"}" data-kind-placeholder-exam="牛客 / 赛码 / HackerRank" data-kind-placeholder-interview="腾讯会议 / Zoom / 飞书" maxlength="100">
+                <input class="input" id="event-platform" name="platform" type="text" value="${escapeHtml(event.platform || "")}" maxlength="100">
               </div>
               <div class="form-field">
-                <span class="field-label" id="event-mode-label" data-kind-label-exam="考试形式" data-kind-label-interview="面试形式">${interview ? "面试形式" : "考试形式"}</span>
-                <div class="segmented" role="radiogroup" aria-labelledby="event-mode-label">
-                  <label class="segmented-option">
-                    <input type="radio" name="mode" value="unknown" ${modeValue === "unknown" ? "checked" : ""}>
-                    <span>待确认</span>
-                  </label>
-                  <label class="segmented-option">
-                    <input type="radio" name="mode" value="online" ${modeValue === "online" ? "checked" : ""}>
-                    <span>线上</span>
-                  </label>
-                  <label class="segmented-option">
-                    <input type="radio" name="mode" value="offline" ${modeValue === "offline" ? "checked" : ""}>
-                    <span>线下</span>
-                  </label>
-                </div>
+                <label class="field-label" for="event-mode" data-kind-label-exam="考试形式" data-kind-label-interview="面试形式">${interview ? "面试形式" : "考试形式"}</label>
+                <select class="select" id="event-mode" name="mode">
+                  <option value="unknown" ${modeValue === "unknown" ? "selected" : ""}>待确认</option>
+                  <option value="online" ${modeValue === "online" ? "selected" : ""}>线上</option>
+                  <option value="offline" ${modeValue === "offline" ? "selected" : ""}>线下</option>
+                </select>
               </div>
             </div>
             <div class="form-grid">
               <div class="form-field is-full">
                 <label class="field-label" for="event-url" data-kind-label-exam="考试链接" data-kind-label-interview="面试链接">${interview ? "面试链接" : "考试链接"}</label>
-                <input class="input" id="event-url" name="exam_url" type="url" value="${escapeHtml(event.exam_url || "")}" placeholder="https://...">
+                <input class="input" id="event-url" name="exam_url" type="url" value="${escapeHtml(event.exam_url || "")}">
               </div>
             </div>
             <div class="form-grid">
               <div class="form-field">
                 <label class="field-label" for="event-code" data-kind-label-exam="考试口令 / 邀请码" data-kind-label-interview="会议号 / 密码">${interview ? "会议号 / 密码" : "考试口令 / 邀请码"}</label>
-                <input class="input" id="event-code" name="access_code" type="text" value="${escapeHtml(event.access_code || "")}" placeholder="${interview ? "会议号、入会密码" : "没有可留空"}" data-kind-placeholder-exam="没有可留空" data-kind-placeholder-interview="会议号、入会密码" maxlength="80" autocomplete="off">
+                <input class="input" id="event-code" name="access_code" type="text" value="${escapeHtml(event.access_code || "")}" maxlength="80" autocomplete="off">
               </div>
               <div class="form-field">
                 <label class="field-label" for="event-location" data-kind-label-exam="考试地点" data-kind-label-interview="面试地点">${interview ? "面试地点" : "考试地点"}</label>
-                <input class="input" id="event-location" name="location" type="text" value="${escapeHtml(event.location || "")}" placeholder="${interview ? "线下面试时填写地址" : "线下考试时填写考点或地址"}" data-kind-placeholder-exam="线下考试时填写考点或地址" data-kind-placeholder-interview="线下面试时填写地址" maxlength="200">
+                <input class="input" id="event-location" name="location" type="text" value="${escapeHtml(event.location || "")}" maxlength="200">
               </div>
             </div>
           </section>
 
           <section class="drawer-section">
-            <div class="drawer-section-head">
-              <h3 class="drawer-section-title">记录状态</h3>
-            </div>
             <div class="form-grid">
               <div class="form-field">
-                <span class="field-label" id="event-status-label">状态</span>
-                <div class="segmented" role="radiogroup" aria-labelledby="event-status-label">
-                  <label class="segmented-option">
-                    <input type="radio" name="status" value="pending" ${statusValue === "pending" ? "checked" : ""}>
-                    <span>待参加</span>
-                  </label>
-                  <label class="segmented-option">
-                    <input type="radio" name="status" value="done" ${statusValue === "done" ? "checked" : ""}>
-                    <span>已完成</span>
-                  </label>
-                  <label class="segmented-option">
-                    <input type="radio" name="status" value="cancelled" ${statusValue === "cancelled" ? "checked" : ""}>
-                    <span>已取消</span>
-                  </label>
-                </div>
+                <label class="field-label" for="event-status">状态</label>
+                <select class="select" id="event-status" name="status">
+                  <option value="pending" ${statusValue === "pending" ? "selected" : ""}>待参加</option>
+                  <option value="done" ${statusValue === "done" ? "selected" : ""}>已完成</option>
+                  <option value="cancelled" ${statusValue === "cancelled" ? "selected" : ""}>已取消</option>
+                </select>
               </div>
               <div class="form-field is-full">
                 <label class="field-label" for="event-notes">我的备注</label>
-                <textarea class="textarea" id="event-notes" name="notes" placeholder="复习重点、设备测试、交通安排…" maxlength="5000">${escapeHtml(event.notes || "")}</textarea>
+                <textarea class="textarea" id="event-notes" name="notes" maxlength="5000">${escapeHtml(event.notes || "")}</textarea>
               </div>
             </div>
             <div class="form-error" data-form-error hidden></div>
           </section>
         </form>
+        </div>
+        ${sourcePane}
       </div>
     </div>
     <div class="drawer-footer">
-      ${footerLeft}
       <div class="drawer-footer-actions">
-        <button class="button button-ghost" type="button" data-action="${mode === "edit" ? "cancel-edit" : "close-drawer"}">取消</button>
-        <button class="button button-primary" type="submit" form="event-form" data-submit-event>${mode === "create" ? `添加${KIND_LABELS[kind]}` : "保存修改"}</button>
+        ${mode === "edit" ? `<button class="button button-ghost button-small is-danger" type="button" data-action="delete-event" data-id="${event.id}">删除</button>
+        ${entryUrl ? `<a class="button button-ghost button-small" href="${escapeHtml(entryUrl)}" target="_blank" rel="noopener noreferrer">${interview ? "前往面试" : "前往考试"}</a>` : ""}
+        <button class="button button-ghost button-small" type="button" data-action="toggle-ignore" data-id="${event.id}">${event.ignored ? "恢复显示" : "忽略"}</button>` : ""}
+        <button class="button button-ghost button-small" type="button" data-action="${mode === "edit" ? "cancel-edit" : "close-drawer"}">取消</button>
+        <button class="button button-ghost button-small" type="submit" form="event-form" data-submit-event>${mode === "create" ? `添加${KIND_LABELS[kind]}` : "保存修改"}</button>
       </div>
     </div>`;
   applyEventKindUI(kind);
@@ -1963,10 +1869,6 @@ function applyEventKindUI(kind) {
     const value = interview ? node.dataset.kindLabelInterview : node.dataset.kindLabelExam;
     if (value) node.textContent = value;
   });
-  document.querySelectorAll("[data-kind-placeholder-exam]").forEach((node) => {
-    const value = interview ? node.dataset.kindPlaceholderInterview : node.dataset.kindPlaceholderExam;
-    if (value) node.setAttribute("placeholder", value);
-  });
   const roundField = document.querySelector("[data-interview-round-field]");
   if (roundField) roundField.hidden = !interview;
   if (state.drawer?.mode === "create") {
@@ -1977,9 +1879,7 @@ function applyEventKindUI(kind) {
   } else if (state.drawer?.event && !state.drawer.event.is_demo) {
     const kicker = document.querySelector("[data-kind-kicker]");
     if (kicker) {
-      kicker.textContent = interview
-        ? "INTERVIEW DETAIL · 面试详情"
-        : "EXAM DETAIL · 笔试详情";
+      kicker.textContent = interview ? "INTERVIEW DETAIL" : "EXAM DETAIL";
     }
   }
   if (state.drawer?.event) state.drawer.event.kind = kind;
@@ -1990,9 +1890,10 @@ function applyEventKindUI(kind) {
 // ---------------------------------------------------------------------------
 
 function showToast(message, type = "success") {
+  const text = String(message || "").trim().replace(/。+$/, "");
   const toast = document.createElement("div");
   toast.className = `toast is-${type}`;
-  toast.textContent = message;
+  toast.textContent = text;
   el.toast.append(toast);
   while (el.toast.children.length > 3) el.toast.firstElementChild?.remove();
   window.setTimeout(() => {
@@ -2201,7 +2102,7 @@ async function deleteEventPermanently(eventId) {
   if (!event) return;
   const confirmed = await showConfirm({
     title: "删除这条日程记录？",
-    message: `${displayCompany(event)} · ${displayRole(event)}\n删除后无法恢复，但不会影响原始邮件。`,
+    message: `${event.company || "-"} · ${[event.role, event.interview_round].filter(Boolean).join(" · ") || "-"}\n删除后无法恢复，但不会影响原始邮件。`,
     confirmLabel: "删除记录",
     danger: true,
     iconName: "trash",
@@ -2557,6 +2458,7 @@ async function clearDemoData() {
 }
 
 async function refreshEverything({ notify = false } = {}) {
+  if (state.view === "dashboard") resetCalendarToToday();
   try {
     await refreshData();
     if (notify) showToast("看板已刷新", "success");
@@ -2577,9 +2479,16 @@ function handleDocumentClick(event) {
   const calendarDay = target.closest("[data-calendar-day]");
   if (calendarDay) {
     event.preventDefault();
-    selectCalendarDay(calendarDay.dataset.calendarDay);
+    const key = calendarDay.dataset.calendarDay;
+    if (state.calendarPinnedKey === key) {
+      setCalendarPinnedKey(null);
+    } else {
+      setCalendarPinnedKey(key);
+      selectCalendarDay(key);
+    }
     return;
   }
+  setCalendarPinnedKey(null);
 
   const navTarget = target.closest("[data-nav]");
   if (navTarget) {
@@ -2655,22 +2564,8 @@ function handleDocumentClick(event) {
     case "close-drawer":
       closeDrawer();
       break;
-    case "edit-event":
-      if (state.drawer?.event) {
-        state.drawer.editing = true;
-        renderDrawer();
-        focusDrawerEditor();
-      }
-      break;
     case "cancel-edit":
-      if (!state.drawer) break;
-      if (state.drawer.mode === "create") {
-        closeDrawer();
-      } else {
-        state.drawer.editing = false;
-        renderDrawer();
-        focusDrawer();
-      }
+      closeDrawer();
       break;
     case "retry-drawer":
       if (state.drawer?.id) openEventDrawer(state.drawer.id);
@@ -2751,7 +2646,7 @@ function handleDocumentInput(event) {
 function handleDocumentChange(event) {
   const target = event.target;
   if (!(target instanceof HTMLInputElement) && !(target instanceof HTMLSelectElement)) return;
-  if (target instanceof HTMLInputElement && target.name === "kind") {
+  if (target.name === "kind") {
     applyEventKindUI(target.value);
   }
 }

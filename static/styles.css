@@ -33,6 +33,7 @@
   --radius-lg: 20px;
   --radius-md: 14px;
   --radius-sm: 10px;
+  --card-inset: 24px;
   --shadow-sm: 0 1px 2px rgba(32, 36, 31, 0.04), 0 8px 24px -18px rgba(32, 36, 31, 0.24);
   --shadow-lg: 0 24px 80px -32px rgba(25, 28, 24, 0.38);
   /* Latin and digits use the mono face; CJK glyphs fall through to the sans faces. */
@@ -645,7 +646,7 @@ summary:focus-visible {
   align-items: center;
   justify-content: space-between;
   gap: 18px;
-  padding: 20px 22px 0;
+  padding: var(--card-inset) var(--card-inset) 0;
 }
 
 .panel-title {
@@ -710,7 +711,7 @@ summary:focus-visible {
 }
 
 .dashboard-header {
-  margin-bottom: 22px;
+  margin-bottom: 30px;
 }
 
 .focus-card {
@@ -720,20 +721,22 @@ summary:focus-visible {
 .focus-card {
   position: relative;
   overflow: hidden;
-  padding: 25px 30px 23px;
-  color: #f8f4ea;
-  border-radius: var(--radius-xl);
+  padding: var(--card-inset);
+  color: var(--ink);
+  border: 1px solid var(--line);
+  border-radius: var(--radius-lg);
   background:
-    radial-gradient(circle at 100% 0%, rgba(237, 101, 50, 0.25), transparent 34%),
-    linear-gradient(145deg, #23271f, #171a16 70%);
-  box-shadow: 0 28px 70px -45px rgba(23, 26, 22, 0.9);
+    radial-gradient(circle at 100% 0%, rgba(237, 101, 50, 0.09), transparent 26rem),
+    var(--surface);
+  box-shadow: var(--shadow-sm);
   isolation: isolate;
   cursor: pointer;
-  transition: box-shadow 160ms ease, transform 160ms ease;
+  transition: border-color 160ms ease, box-shadow 160ms ease, transform 160ms ease;
 }
 
 .focus-card:hover {
-  box-shadow: 0 32px 76px -44px rgba(23, 26, 22, 0.98);
+  border-color: var(--line-strong);
+  box-shadow: 0 1px 2px rgba(32, 36, 31, 0.05), 0 14px 36px -28px rgba(32, 36, 31, 0.32);
 }
 
 .focus-card:active {
@@ -752,7 +755,7 @@ summary:focus-visible {
 }
 
 .focus-card-hit:focus-visible {
-  outline: 2px solid rgba(248, 244, 234, 0.7);
+  outline: 2px solid rgba(237, 101, 50, 0.42);
   outline-offset: -4px;
 }
 
@@ -770,13 +773,13 @@ summary:focus-visible {
   right: -135px;
   width: 390px;
   height: 390px;
-  border: 1px solid rgba(255, 255, 255, 0.055);
+  border: 1px solid rgba(237, 101, 50, 0.10);
   border-radius: 50%;
   box-shadow:
-    0 0 0 44px rgba(255, 255, 255, 0.022),
-    0 0 0 45px rgba(255, 255, 255, 0.045),
-    0 0 0 92px rgba(255, 255, 255, 0.014),
-    0 0 0 93px rgba(255, 255, 255, 0.035);
+    0 0 0 44px rgba(237, 101, 50, 0.025),
+    0 0 0 45px rgba(237, 101, 50, 0.05),
+    0 0 0 92px rgba(237, 101, 50, 0.015),
+    0 0 0 93px rgba(237, 101, 50, 0.04);
   content: "";
   pointer-events: none;
 }
@@ -786,19 +789,19 @@ summary:focus-visible {
   z-index: 1;
   display: flex;
   align-items: center;
-  gap: 9px;
-  color: rgba(248, 244, 234, 0.48);
+  gap: 8px;
+  color: var(--muted);
   font-family: var(--font-mono);
-  font-size: 11px;
+  font-size: 8.5px;
   font-weight: 400;
-  letter-spacing: 0.12em;
+  letter-spacing: 0.16em;
   text-transform: uppercase;
 }
 
 .focus-kicker::before {
-  width: 21px;
+  width: 18px;
   height: 1px;
-  background: rgba(248, 244, 234, 0.36);
+  background: var(--accent);
   content: "";
 }
 
@@ -812,18 +815,18 @@ summary:focus-visible {
 }
 
 .focus-company {
-  color: rgba(248, 244, 234, 0.95);
+  color: var(--ink);
   font-size: 26px;
   font-weight: 600;
-  letter-spacing: -0.03em;
+  letter-spacing: -0.01em;
   line-height: 1.2;
 }
 
 .focus-role {
   max-width: 620px;
   margin-top: 6px;
-  color: rgba(248, 244, 234, 0.6);
-  font-size: 13.5px;
+  color: var(--muted);
+  font-size: 13px;
   line-height: 1.5;
 }
 
@@ -833,7 +836,7 @@ summary:focus-visible {
   gap: 9px;
   margin-left: auto;
   padding-right: 2px;
-  color: #fff9ef;
+  color: var(--accent-deep);
   text-align: right;
 }
 
@@ -846,7 +849,7 @@ summary:focus-visible {
 }
 
 .focus-countdown span {
-  color: rgba(248, 244, 234, 0.58);
+  color: var(--muted);
   font-size: 11px;
 }
 
@@ -866,7 +869,7 @@ summary:focus-visible {
   gap: 28px;
   margin-top: 24px;
   padding-top: 18px;
-  border-top: 1px solid rgba(255, 255, 255, 0.08);
+  border-top: 1px solid var(--line);
 }
 
 .focus-meta {
@@ -880,7 +883,7 @@ summary:focus-visible {
 
 .focus-meta-item span {
   display: block;
-  color: rgba(248, 244, 234, 0.48);
+  color: var(--muted);
   font-size: 11px;
   line-height: 1.4;
 }
@@ -889,8 +892,8 @@ summary:focus-visible {
   display: block;
   margin-top: 4px;
   overflow: hidden;
-  color: rgba(248, 244, 234, 0.88);
-  font-size: 13.5px;
+  color: var(--ink-soft);
+  font-size: 13px;
   font-weight: 400;
   text-overflow: ellipsis;
   white-space: nowrap;
@@ -904,28 +907,6 @@ summary:focus-visible {
   flex-wrap: wrap;
   align-items: center;
   gap: 9px;
-}
-
-.focus-actions .button-primary {
-  color: var(--ink);
-  background: #f7efe3;
-  box-shadow: none;
-}
-
-.focus-actions .button-primary:hover {
-  background: #fffaf1;
-}
-
-.focus-actions .button-ghost {
-  color: rgba(248, 244, 234, 0.7);
-  border-color: rgba(255, 255, 255, 0.14);
-  background: transparent;
-}
-
-.focus-actions .button-ghost:hover {
-  color: #fff;
-  border-color: rgba(255, 255, 255, 0.28);
-  background: rgba(255, 255, 255, 0.05);
 }
 
 .focus-empty {
@@ -951,19 +932,13 @@ summary:focus-visible {
 
 .focus-empty p {
   margin-top: 13px;
-  color: rgba(248, 244, 234, 0.45);
+  color: var(--muted);
   font-size: 13px;
   line-height: 1.75;
 }
 
 .focus-empty .focus-actions {
   margin-top: 25px;
-}
-
-.focus-empty .button-ghost {
-  color: rgba(248, 244, 234, 0.62);
-  border-color: rgba(255, 255, 255, 0.12);
-  background: transparent;
 }
 
 /* ==========================================================================
@@ -1232,6 +1207,11 @@ summary:focus-visible {
   flex-wrap: wrap;
 }
 
+.events-panel-eyebrow {
+  margin-bottom: 8px;
+  font-size: 8.5px;
+}
+
 .calendar-controls {
   display: flex;
   flex-wrap: wrap;
@@ -1275,10 +1255,6 @@ summary:focus-visible {
   text-align: center;
 }
 
-.calendar-all {
-  margin-left: 6px;
-}
-
 .calendar-layout {
   display: grid;
   grid-template-columns: minmax(0, 1.7fr) minmax(250px, 1fr);
@@ -1300,7 +1276,7 @@ summary:focus-visible {
 
 .calendar-weekday {
   color: var(--faint);
-  font-size: 10px;
+  font-size: 11px;
   text-align: center;
 }
 
@@ -1319,17 +1295,18 @@ summary:focus-visible {
 .calendar-day {
   display: flex;
   flex-direction: column;
-  align-items: flex-start;
+  align-items: center;
   justify-content: space-between;
   gap: 4px;
   padding: 7px 8px;
   color: var(--ink-soft);
   border: 1px solid transparent;
   background: transparent;
+  box-shadow: inset 0 0 0 1px transparent;
   font-family: inherit;
-  text-align: left;
+  text-align: center;
   cursor: pointer;
-  transition: background 140ms ease, border-color 140ms ease;
+  transition: background 180ms ease, border-color 240ms ease, box-shadow 240ms ease;
 }
 
 .calendar-day:hover,
@@ -1343,8 +1320,12 @@ summary:focus-visible {
 }
 
 .calendar-day.is-selected {
-  border-color: var(--line-strong);
   background: var(--surface-muted);
+}
+
+.calendar-day.is-pinned {
+  border-color: var(--accent);
+  box-shadow: inset 0 0 0 1px var(--accent-soft);
 }
 
 .calendar-day.has-events .calendar-day-number {
@@ -1386,7 +1367,7 @@ summary:focus-visible {
 .calendar-more {
   color: var(--faint);
   font-family: var(--font-mono);
-  font-size: 8px;
+  font-size: 8.5px;
   line-height: 1;
 }
 
@@ -1397,7 +1378,7 @@ summary:focus-visible {
 .calendar-undated {
   margin: 11px 2px 0;
   color: var(--faint);
-  font-size: 10.5px;
+  font-size: 11px;
   line-height: 1.6;
 }
 
@@ -1420,21 +1401,14 @@ summary:focus-visible {
 
 .calendar-agenda-date {
   color: var(--ink);
-  font-size: 13.5px;
+  font-size: 13px;
   font-weight: 600;
 }
 
 .calendar-agenda-date span {
   color: var(--muted);
-  font-size: 11.5px;
+  font-size: 11px;
   font-weight: 400;
-}
-
-.calendar-agenda-count {
-  flex: 0 0 auto;
-  color: var(--faint);
-  font-family: var(--font-mono);
-  font-size: 10px;
 }
 
 .calendar-agenda-list {
@@ -1453,13 +1427,16 @@ summary:focus-visible {
   border: 0;
   border-radius: 8px;
   background: transparent;
+  box-shadow: inset 0 0 0 1px transparent;
   text-align: left;
   cursor: pointer;
+  transition: background 140ms ease, box-shadow 180ms ease;
 }
 
 .calendar-event:hover,
 .calendar-event:focus-visible {
   background: var(--surface);
+  box-shadow: inset 0 0 0 1px var(--line-strong);
 }
 
 .calendar-event:focus-visible {
@@ -1477,7 +1454,7 @@ summary:focus-visible {
 .calendar-event-company {
   overflow: hidden;
   color: var(--ink);
-  font-size: 12.5px;
+  font-size: 13px;
   font-weight: 600;
   text-overflow: ellipsis;
   white-space: nowrap;
@@ -1489,7 +1466,7 @@ summary:focus-visible {
   gap: 5px;
   min-width: 0;
   color: var(--muted);
-  font-size: 10.5px;
+  font-size: 11px;
 }
 
 .calendar-event-time {
@@ -1510,7 +1487,7 @@ summary:focus-visible {
 .calendar-agenda-empty {
   margin: 16px 8px;
   color: var(--faint);
-  font-size: 11.5px;
+  font-size: 11px;
   line-height: 1.6;
 }
 
@@ -1860,6 +1837,7 @@ summary:focus-visible {
 .library-row-actions {
   display: flex;
   align-items: center;
+  gap: 4px;
   padding: 0 14px 0 0;
   opacity: 0;
   transition: opacity 150ms ease;
@@ -1911,7 +1889,7 @@ summary:focus-visible {
   align-items: center;
   column-gap: 14px;
   row-gap: 15px;
-  padding: 20px;
+  padding: var(--card-inset);
   border: 1px solid var(--line);
   border-radius: var(--radius-lg);
   background: var(--surface);
@@ -1953,7 +1931,7 @@ summary:focus-visible {
 }
 
 .account-email {
-  margin-top: 4px;
+  margin-top: 8px;
   overflow: hidden;
   color: var(--muted);
   font-size: 12.5px;
@@ -2023,7 +2001,7 @@ summary:focus-visible {
 .add-account-panel {
   position: sticky;
   top: 28px;
-  padding: 24px;
+  padding: var(--card-inset);
 }
 
 .panel-heading {
@@ -2127,62 +2105,6 @@ summary:focus-visible {
   padding: 10px 11px;
   line-height: 1.6;
   resize: vertical;
-}
-
-.segmented {
-  display: flex;
-  gap: 2px;
-  height: 39px;
-  padding: 3px;
-  border: 1px solid var(--line-strong);
-  border-radius: 9px;
-  background: var(--surface-muted);
-}
-
-.segmented-option {
-  position: relative;
-  flex: 1;
-  min-width: 0;
-}
-
-.segmented-option input {
-  position: absolute;
-  width: 1px;
-  height: 1px;
-  opacity: 0;
-}
-
-.segmented-option span {
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  height: 31px;
-  padding: 0 8px;
-  overflow: hidden;
-  color: var(--muted);
-  border-radius: 6px;
-  font-size: 13px;
-  font-weight: 400;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-  cursor: pointer;
-  transition: color 150ms ease, background 150ms ease, box-shadow 150ms ease;
-}
-
-.segmented-option span:hover {
-  color: var(--ink);
-}
-
-.segmented-option input:checked + span {
-  color: var(--ink);
-  background: var(--surface-raised);
-  font-weight: 600;
-  box-shadow: 0 0 0 1px var(--line), 0 2px 8px -6px rgba(32, 36, 31, 0.32);
-}
-
-.segmented-option input:focus-visible + span {
-  outline: 2px solid rgba(237, 101, 50, 0.5);
-  outline-offset: 1px;
 }
 
 .input::placeholder,
@@ -2334,11 +2256,15 @@ input[type="password"]::-ms-clear {
   background: var(--surface);
   box-shadow: -30px 0 80px -40px rgba(23, 26, 22, 0.52);
   transform: translateX(102%);
-  transition: transform 300ms cubic-bezier(0.22, 0.8, 0.25, 1);
+  transition: transform 300ms cubic-bezier(0.22, 0.8, 0.25, 1), width 300ms ease;
 }
 
 .event-drawer.is-open {
   transform: translateX(0);
+}
+
+.event-drawer.is-editing-wide {
+  width: min(1000px, 100vw);
 }
 
 .drawer-header {
@@ -2406,118 +2332,43 @@ input[type="password"]::-ms-clear {
   padding: 21px 27px 30px;
 }
 
-.detail-section {
-  padding-top: 20px;
-  margin-top: 20px;
-  border-top: 1px solid var(--line);
-}
-
-.detail-section:first-of-type {
-  padding-top: 0;
-  margin-top: 0;
-  border-top: 0;
-}
-
-.detail-facts {
+.drawer-body.edit-layout {
   display: grid;
-  grid-template-columns: repeat(2, minmax(0, 1fr));
-  gap: 1px;
-  margin: 12px 0 0;
-  overflow: hidden;
-  border: 1px solid var(--line);
-  border-radius: 12px;
-  background: var(--line);
+  grid-template-columns: minmax(0, 1.6fr) minmax(300px, 0.9fr);
+  gap: 28px;
+  align-items: start;
 }
 
-.detail-fact {
+.edit-form-column {
   min-width: 0;
-  padding: 13px 15px;
-  background: var(--surface-raised);
 }
 
-.detail-fact.is-full {
-  grid-column: 1 / -1;
+.source-pane {
+  position: sticky;
+  top: 0;
+  align-self: start;
+  min-width: 0;
+  background: var(--surface);
 }
 
-.detail-fact dt {
-  color: var(--faint);
-  font-family: var(--font-mono);
-  font-size: 9px;
-  letter-spacing: 0.08em;
-  text-transform: uppercase;
-}
-
-.detail-fact dd {
-  margin-top: 5px;
-  color: var(--ink-soft);
-  font-size: 12.5px;
-  line-height: 1.6;
-  overflow-wrap: anywhere;
-}
-
-.detail-notes {
-  margin-top: 10px;
-  color: var(--ink-soft);
-  font-size: 12.5px;
-  line-height: 1.8;
-  white-space: pre-wrap;
-}
-
-.detail-section .note-list {
-  padding: 13px 14px;
-  margin-top: 12px;
-  border: 1px solid var(--line);
-  border-radius: 11px;
-  background: var(--surface-muted);
-}
-
-.detail-source {
-  padding-bottom: 4px;
-}
-
-.drawer-meta {
+.source-pane-inner {
   display: flex;
-  flex-wrap: wrap;
-  align-items: center;
-  justify-content: space-between;
-  gap: 8px 16px;
-  margin-bottom: 18px;
+  flex-direction: column;
 }
 
-.drawer-meta-main {
-  display: flex;
-  flex-wrap: wrap;
-  align-items: center;
-  gap: 10px;
+.source-pane .drawer-section-head {
+  margin-bottom: 10px;
 }
 
-.drawer-meta-text {
-  display: inline-flex;
-  align-items: center;
-  gap: 4px;
-  color: var(--muted);
-  font-size: 10.5px;
-  line-height: 1.3;
-  white-space: nowrap;
-}
+@media (max-width: 980px) {
+  .drawer-body.edit-layout {
+    grid-template-columns: 1fr;
+    gap: 18px;
+  }
 
-.drawer-meta-text.is-ai svg {
-  color: var(--green);
-}
-
-.drawer-entry-link {
-  display: inline-flex;
-  align-items: center;
-  gap: 5px;
-  color: var(--ink-soft);
-  font-size: 10.5px;
-  font-weight: 600;
-  text-decoration: none;
-  white-space: nowrap;
-}
-
-.drawer-entry-link:hover {
-  color: var(--accent);
+  .source-pane {
+    position: static;
+  }
 }
 
 .drawer-alert {
@@ -2542,15 +2393,11 @@ input[type="password"]::-ms-clear {
 }
 
 .drawer-section {
-  padding-top: 21px;
-  margin-top: 21px;
-  border-top: 1px solid var(--line);
+  margin-top: 26px;
 }
 
 .drawer-section:first-of-type {
-  padding-top: 0;
   margin-top: 0;
-  border-top: 0;
 }
 
 .drawer-section-head {
@@ -2563,31 +2410,16 @@ input[type="password"]::-ms-clear {
 
 .drawer-section-title {
   color: var(--ink-soft);
-  font-family: var(--font-mono);
-  font-size: 9px;
+  font-family: var(--font-sans);
+  font-size: 11px;
   font-weight: 600;
-  letter-spacing: 0.1em;
-  text-transform: uppercase;
+  letter-spacing: 0;
+  text-transform: none;
 }
 
 .drawer-section-note {
   color: var(--faint);
   font-size: 9.5px;
-}
-
-.note-list {
-  display: flex;
-  flex-direction: column;
-  gap: 7px;
-  margin: 0;
-  padding: 0;
-  list-style: none;
-}
-
-.note-list li {
-  color: var(--ink-soft);
-  font-size: 10.5px;
-  line-height: 1.7;
 }
 
 .source-mail {
@@ -2674,6 +2506,7 @@ input[type="password"]::-ms-clear {
 .drawer-footer {
   display: flex;
   flex: 0 0 auto;
+  flex-wrap: wrap;
   align-items: center;
   gap: 12px;
   padding: 13px 27px;
@@ -2682,15 +2515,11 @@ input[type="password"]::-ms-clear {
   backdrop-filter: blur(8px);
 }
 
-.drawer-footer-left {
-  display: flex;
-  align-items: center;
-  gap: 2px;
-}
-
 .drawer-footer-actions {
   display: flex;
+  flex-wrap: wrap;
   align-items: center;
+  justify-content: flex-end;
   gap: 8px;
   margin-left: auto;
 }
@@ -3028,10 +2857,6 @@ input[type="password"]::-ms-clear {
     padding: 38px 32px 80px;
   }
 
-  .focus-card {
-    padding: 25px 26px 23px;
-  }
-
   .event-card-main {
     gap: 12px;
   }
@@ -3192,7 +3017,7 @@ input[type="password"]::-ms-clear {
   .focus-card {
     min-height: auto;
     padding: 22px;
-    border-radius: 22px;
+    border-radius: var(--radius-lg);
   }
 
   .focus-company {
@@ -3353,25 +3178,12 @@ input[type="password"]::-ms-clear {
     padding: 18px 18px 26px;
   }
 
-  .detail-facts {
-    grid-template-columns: 1fr;
-  }
-
-  .detail-fact.is-full {
-    grid-column: auto;
-  }
-
   .drawer-footer {
     padding: 11px 18px;
   }
 
   .drawer-title {
     font-size: 22px;
-  }
-
-  .drawer-footer-left .button {
-    padding: 0 9px;
-    font-size: 10px;
   }
 
   .toast-region {
@@ -3405,7 +3217,7 @@ input[type="password"]::-ms-clear {
   }
 
   .focus-kicker {
-    font-size: 10px;
+    font-size: 8.5px;
   }
 
   .focus-company {
@@ -3447,9 +3259,6 @@ input[type="password"]::-ms-clear {
     justify-content: flex-end;
   }
 
-  .drawer-footer-actions .button-primary {
-    flex: 1;
-  }
 }
 
 @media (prefers-reduced-motion: reduce) {
@@ -3476,7 +3285,7 @@ input[type="password"]::-ms-clear {
   grid-template-columns: minmax(230px, 0.72fr) minmax(0, 1.55fr);
   gap: 32px;
   margin-top: 18px;
-  padding: 28px 30px;
+  padding: var(--card-inset);
   animation: rise-in 500ms 110ms both;
 }
 
@@ -3561,10 +3370,6 @@ input[type="password"]::-ms-clear {
 
 .form-field.is-hidden {
   display: none;
-}
-
-.drawer-footer-left .text-button {
-  margin-right: 4px;
 }
 
 .drawer-load-error {
@@ -3712,10 +3517,6 @@ input[type="password"]::-ms-clear {
   font-size: 10px;
 }
 
-.note-list li {
-  font-size: 11.5px;
-}
-
 .source-subject {
   font-size: 11.5px;
 }
@@ -3734,7 +3535,7 @@ input[type="password"]::-ms-clear {
 }
 
 .mailbox-explainer {
-  padding: 20px;
+  padding: var(--card-inset);
   border: 1px dashed var(--line-strong);
   border-radius: 16px;
   background:
@@ -3954,7 +3755,7 @@ input[type="password"]::-ms-clear {
 
 .ai-settings-panel {
   margin-top: 18px;
-  padding: 24px;
+  padding: var(--card-inset);
   animation: rise-in 440ms 70ms both;
 }
 
@@ -4050,27 +3851,27 @@ body {
 }
 
 .focus-kicker {
-  font-size: 10px;
+  font-size: 8.5px;
 }
 
 .focus-company {
-  font-size: 19px;
+  font-size: 18px;
 }
 
 .focus-role {
-  font-size: 14px;
+  font-size: 13px;
 }
 
 .focus-meta-item span {
-  font-size: 10px;
+  font-size: 11px;
 }
 
 .focus-meta-item strong {
-  font-size: 14px;
+  font-size: 13px;
 }
 
 .focus-countdown span {
-  font-size: 12px;
+  font-size: 11px;
 }
 
 .company-name {
@@ -4145,7 +3946,7 @@ body {
 }
 
 .drawer-section-title {
-  font-size: 10px;
+  font-size: 11px;
 }
 
 .field-label {
@@ -4166,10 +3967,6 @@ body {
   font-size: 10.5px;
 }
 
-.note-list li {
-  font-size: 12.5px;
-}
-
 .source-subject {
   font-size: 12.5px;
 }
@@ -4180,15 +3977,6 @@ body {
 
 .source-body {
   font-size: 12px;
-}
-
-.detail-fact dt {
-  font-size: 10px;
-}
-
-.detail-fact dd,
-.detail-notes {
-  font-size: 13.5px;
 }
 
 @media (max-width: 760px) {
