@@ -4,15 +4,17 @@ import json
 import logging
 import re
 import threading
+from collections import deque
+from concurrent.futures import Future, ThreadPoolExecutor
 from dataclasses import dataclass, field, replace
 from datetime import datetime, timedelta, timezone
 from typing import Any, Callable
 
 from ..db import Database
-from ..llm import LLMError
+from ..llm import DEFAULT_CONCURRENCY, LLMError, MAX_CONCURRENCY
 from ..mail.imap import MailboxError, MailboxSession, MailAccount
-from ..mail.mime import make_message_key, parse_raw_email
-from ..extract.pipeline import analyze_email
+from ..mail.mime import ParsedEmail, make_message_key, parse_raw_email
+from ..extract.pipeline import Analysis, analyze_email
 from ..security import CredentialError, SecretBox
 from ..timeutil import local_iso, utc_now_iso
 from .accounts import build_mail_account
@@ -30,6 +32,27 @@ class SyncResult:
     success: bool
     counts: dict[str, int] = field(default_factory=dict)
     error: str | None = None
+
+
+@dataclass
+class _PendingEmail:
+    """A prepared email waiting for its LLM result to be applied in order."""
+
+    parsed: ParsedEmail
+    message_key: str
+    analysis: Analysis
+    seen: dict[str, Any] | None
+    llm_used: bool = False
+    quota_exhausted: bool = False
+    future: Future[Any] | None = None
+
+
+def _llm_concurrency(llm: Any) -> int:
+    try:
+        value = int(getattr(llm, "concurrency", DEFAULT_CONCURRENCY))
+    except (TypeError, ValueError):
+        return DEFAULT_CONCURRENCY
+    return max(1, min(MAX_CONCURRENCY, value))
 
 
 class SyncService:
@@ -110,159 +133,110 @@ class SyncService:
                     "LLM recognition is unavailable for account %s: %s", account_id, exc
                 )
         llm_calls = 0
+        max_calls = int(getattr(llm, "max_calls", 0) or 0) if llm is not None else 0
+        concurrency = _llm_concurrency(llm) if llm is not None else 1
+        pending: deque[_PendingEmail] = deque()
+        pending_keys: set[str] = set()
         try:
-            with self.session_factory(mail_account) as session:
-                search = session.search(
-                    since=since,
-                    last_uid=0 if rescan else int(row.get("last_uid") or 0),
-                    known_uidvalidity=None if rescan else row.get("uidvalidity"),
-                    limit=int(row.get("max_messages") or 300),
-                )
-                next_uid = max(next_uid, search.top_uid)
-                uidvalidity = search.uidvalidity
-                for uid in sorted(search.uids, reverse=True):
+            with ThreadPoolExecutor(
+                max_workers=concurrency, thread_name_prefix="campus-radar-llm"
+            ) as pool:
+                with self.session_factory(mail_account) as session:
+                    search = session.search(
+                        since=since,
+                        last_uid=0 if rescan else int(row.get("last_uid") or 0),
+                        known_uidvalidity=None if rescan else row.get("uidvalidity"),
+                        limit=int(row.get("max_messages") or 300),
+                    )
+                    next_uid = max(next_uid, search.top_uid)
+                    uidvalidity = search.uidvalidity
                     try:
-                        raw = session.fetch_raw(uid)
-                    except MailboxError:
-                        raise
-                    counts["downloaded"] += 1
-                    if len(raw) > MAX_EMAIL_BYTES:
-                        counts["errors"] += 1
-                        self._record_seen(account_id, f"uid-too-large-{uid}", "too_large", None)
-                        continue
-                    message_key: str | None = None
-                    try:
-                        parsed = parse_raw_email(raw, fallback_received_at=datetime.now(timezone.utc))
-                        message_key = make_message_key(parsed, raw)
-                        seen = self._seen_row(account_id, message_key)
-                        reprocess = bool(
-                            seen
-                            and rescan
-                            and seen.get("event_id") is None
-                            and seen.get("outcome") in RESCANNABLE_OUTCOMES
-                        )
-                        if seen and not reprocess:
-                            counts["skipped"] += 1
-                            continue
-                        counts["scanned"] += 1
-                        analysis = analyze_email(parsed)
-                        llm_error = False
-                        should_consider = False
-                        if llm is not None:
+                        for uid in sorted(search.uids, reverse=True):
                             try:
-                                should_consider = llm.should_consider(parsed, analysis)
-                            except Exception:
-                                should_consider = False
-                            max_calls = int(getattr(llm, "max_calls", 0) or 0)
-                            if should_consider and llm_calls < max_calls:
-                                llm_calls += 1
-                                counts["llm_called"] += 1
-                                try:
-                                    llm_analysis = llm.analyze(parsed)
-                                except LLMError as exc:
-                                    counts["llm_errors"] += 1
-                                    llm_error = True
-                                    llm_analysis = None
-                                    self.logger.warning(
-                                        "LLM recognition failed for account %s: %s",
-                                        account_id,
-                                        exc,
-                                    )
-                                if (
-                                    llm_analysis
-                                    and llm_analysis.accepted
-                                    and llm_analysis.fields
-                                    and llm_analysis.timing
-                                ):
-                                    analysis = self._merge_llm_analysis(
-                                        llm_analysis, analysis
-                                    )
-                                    counts["llm_matched"] += 1
-                                elif not llm_error:
-                                    # A successful LLM rejection is authoritative and
-                                    # must veto a local false positive.
-                                    counts["llm_rejected"] += 1
-                                    counts["skipped"] += 1
-                                    self._record_seen(
-                                        account_id, message_key, "llm_rejected", None
-                                    )
-                                    continue
-                            elif should_consider and analysis.accepted:
-                                note = "本轮大模型调用次数已用完，仅使用本地规则识别，请核对。"
-                                analysis = replace(
-                                    analysis,
-                                    needs_review=True,
-                                    auto_notes=(
-                                        f"{note}\n{analysis.auto_notes}"
-                                        if analysis.auto_notes
-                                        else note
-                                    ),
+                                raw = session.fetch_raw(uid)
+                            except MailboxError:
+                                raise
+                            counts["downloaded"] += 1
+                            if len(raw) > MAX_EMAIL_BYTES:
+                                counts["errors"] += 1
+                                self._record_seen(
+                                    account_id,
+                                    f"uid-too-large-{uid}",
+                                    "too_large",
+                                    None,
                                 )
-                        if llm_error and analysis.accepted:
-                            note = "大模型识别失败，暂用本地规则识别，请核对。"
-                            analysis = replace(
-                                analysis,
-                                needs_review=True,
-                                auto_notes=(
-                                    f"{note}\n{analysis.auto_notes}"
-                                    if analysis.auto_notes
-                                    else note
-                                ),
-                            )
-                        if not analysis.accepted or not analysis.fields or not analysis.timing:
-                            counts["skipped"] += 1
-                            if llm_error:
-                                outcome = "llm_error"
-                            else:
-                                outcome = "not_event"
-                            self._record_seen(account_id, message_key, outcome, None)
-                            continue
-                        counts["matched"] += 1
-                        new_values = self._event_values(account_id, parsed, analysis)
-                        reschedule = bool(RESCHEDULE_RE.search(f"{parsed.subject}\n{parsed.body_text[:3000]}"))
-                        existing = find_duplicate_event(
-                            self.db,
-                            account_id=account_id,
-                            company=new_values["company"],
-                            role=new_values["role"],
-                            exam_start=new_values["exam_start"],
-                            exam_url=new_values["exam_url"],
-                            reschedule=reschedule,
-                            kind=new_values["kind"],
-                            interview_round=new_values["interview_round"],
-                        )
-                        if existing:
-                            merge_into_event(
-                                self.db,
-                                existing,
-                                new_values=new_values,
-                                subject=parsed.subject,
-                                sender=parsed.from_line,
-                                received_at=local_iso(parsed.received_at),
-                                body=parsed.body_text,
-                                reschedule=reschedule,
-                            )
-                            counts["merged"] += 1
-                            self._record_seen(account_id, message_key, "merged", int(existing["id"]))
-                        else:
-                            event_id = self._insert_event(new_values)
-                            counts["created"] += 1
-                            if new_values["kind"] == "interview":
-                                counts["created_interviews"] += 1
-                            else:
-                                counts["created_exams"] += 1
-                            self._record_seen(account_id, message_key, "created", event_id)
-                        if seen:
-                            counts["reclassified"] += 1
-                    except Exception:
-                        counts["errors"] += 1
-                        self.logger.exception("Failed to process one email for account %s", account_id)
-                        if message_key:
+                                continue
+                            message_key: str | None = None
                             try:
-                                self._record_seen(account_id, message_key, "error", None)
+                                parsed = parse_raw_email(
+                                    raw,
+                                    fallback_received_at=datetime.now(timezone.utc),
+                                )
+                                message_key = make_message_key(parsed, raw)
+                                seen = self._seen_row(account_id, message_key)
+                                reprocess = bool(
+                                    seen
+                                    and rescan
+                                    and seen.get("event_id") is None
+                                    and seen.get("outcome") in RESCANNABLE_OUTCOMES
+                                )
+                                if seen and not reprocess:
+                                    counts["skipped"] += 1
+                                    continue
+                                if message_key in pending_keys:
+                                    # The same message can appear under multiple
+                                    # UIDs before either copy is persisted.
+                                    counts["skipped"] += 1
+                                    continue
+                                pending_keys.add(message_key)
+                                counts["scanned"] += 1
+                                analysis = analyze_email(parsed)
+                                job = _PendingEmail(
+                                    parsed=parsed,
+                                    message_key=message_key,
+                                    analysis=analysis,
+                                    seen=seen,
+                                )
+                                if llm is not None:
+                                    try:
+                                        should_consider = llm.should_consider(
+                                            parsed, analysis
+                                        )
+                                    except Exception:
+                                        should_consider = False
+                                    if should_consider and llm_calls < max_calls:
+                                        llm_calls += 1
+                                        counts["llm_called"] += 1
+                                        job.llm_used = True
+                                        job.future = pool.submit(llm.analyze, parsed)
+                                    elif should_consider and analysis.accepted:
+                                        job.quota_exhausted = True
                             except Exception:
-                                pass
-                        continue
+                                counts["errors"] += 1
+                                self.logger.exception(
+                                    "Failed to process one email for account %s",
+                                    account_id,
+                                )
+                                if message_key:
+                                    try:
+                                        self._record_seen(
+                                            account_id, message_key, "error", None
+                                        )
+                                    except Exception:
+                                        pass
+                                continue
+                            pending.append(job)
+                            if len(pending) >= concurrency:
+                                self._finish_pending(
+                                    pending.popleft(), counts, account_id
+                                )
+                    finally:
+                        # Apply finished emails in newest-first order, even when
+                        # the mailbox connection fails mid-sync.
+                        while pending:
+                            self._finish_pending(
+                                pending.popleft(), counts, account_id
+                            )
         except MailboxError as exc:
             self.logger.warning("Mailbox sync failed for account %s: %s", account_id, exc)
             return self._set_failed(account_id, str(exc))
@@ -306,6 +280,121 @@ class SyncService:
             counts["errors"],
         )
         return SyncResult(success=True, counts=counts)
+
+    def _finish_pending(
+        self, job: _PendingEmail, counts: dict[str, int], account_id: int
+    ) -> None:
+        try:
+            self._process_pending(job, counts, account_id)
+        except Exception:
+            counts["errors"] += 1
+            self.logger.exception(
+                "Failed to process one email for account %s", account_id
+            )
+            try:
+                self._record_seen(account_id, job.message_key, "error", None)
+            except Exception:
+                pass
+
+    def _process_pending(
+        self, job: _PendingEmail, counts: dict[str, int], account_id: int
+    ) -> None:
+        parsed = job.parsed
+        message_key = job.message_key
+        seen = job.seen
+        analysis = job.analysis
+        llm_error = False
+        if job.llm_used:
+            try:
+                llm_analysis = job.future.result() if job.future is not None else None
+            except LLMError as exc:
+                counts["llm_errors"] += 1
+                llm_error = True
+                llm_analysis = None
+                self.logger.warning(
+                    "LLM recognition failed for account %s: %s", account_id, exc
+                )
+            if (
+                llm_analysis
+                and llm_analysis.accepted
+                and llm_analysis.fields
+                and llm_analysis.timing
+            ):
+                analysis = self._merge_llm_analysis(llm_analysis, analysis)
+                counts["llm_matched"] += 1
+            elif not llm_error:
+                # A successful LLM rejection is authoritative and
+                # must veto a local false positive.
+                counts["llm_rejected"] += 1
+                counts["skipped"] += 1
+                self._record_seen(account_id, message_key, "llm_rejected", None)
+                return
+        elif job.quota_exhausted:
+            note = "本轮大模型调用次数已用完，仅使用本地规则识别，请核对。"
+            analysis = replace(
+                analysis,
+                needs_review=True,
+                auto_notes=(
+                    f"{note}\n{analysis.auto_notes}"
+                    if analysis.auto_notes
+                    else note
+                ),
+            )
+        if llm_error and analysis.accepted:
+            note = "大模型识别失败，暂用本地规则识别，请核对。"
+            analysis = replace(
+                analysis,
+                needs_review=True,
+                auto_notes=(
+                    f"{note}\n{analysis.auto_notes}"
+                    if analysis.auto_notes
+                    else note
+                ),
+            )
+        if not analysis.accepted or not analysis.fields or not analysis.timing:
+            counts["skipped"] += 1
+            outcome = "llm_error" if llm_error else "not_event"
+            self._record_seen(account_id, message_key, outcome, None)
+            return
+        counts["matched"] += 1
+        new_values = self._event_values(account_id, parsed, analysis)
+        reschedule = bool(
+            RESCHEDULE_RE.search(f"{parsed.subject}\n{parsed.body_text[:3000]}")
+        )
+        existing = find_duplicate_event(
+            self.db,
+            account_id=account_id,
+            company=new_values["company"],
+            role=new_values["role"],
+            exam_start=new_values["exam_start"],
+            exam_url=new_values["exam_url"],
+            reschedule=reschedule,
+            kind=new_values["kind"],
+            interview_round=new_values["interview_round"],
+        )
+        if existing:
+            merge_into_event(
+                self.db,
+                existing,
+                new_values=new_values,
+                subject=parsed.subject,
+                sender=parsed.from_line,
+                received_at=local_iso(parsed.received_at),
+                body=parsed.body_text,
+                reschedule=reschedule,
+            )
+            counts["merged"] += 1
+            self._record_seen(account_id, message_key, "merged", int(existing["id"]))
+        else:
+            event_id = self._insert_event(new_values)
+            counts["created"] += 1
+            if new_values["kind"] == "interview":
+                counts["created_interviews"] += 1
+            else:
+                counts["created_exams"] += 1
+            self._record_seen(account_id, message_key, "created", event_id)
+        if seen:
+            counts["reclassified"] += 1
 
     def _seen_row(self, account_id: int, message_key: str) -> dict[str, Any] | None:
         return self.db.fetch_one(

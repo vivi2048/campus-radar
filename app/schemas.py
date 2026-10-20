@@ -63,6 +63,7 @@ class AISettingsUpdate(BaseModel):
     api_key: str | None = None
     clear_api_key: bool = False
     max_calls_per_sync: int = 20
+    concurrency: int = 4
 
 
 class AccountCreate(BaseModel):

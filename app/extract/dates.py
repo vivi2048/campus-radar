@@ -57,8 +57,8 @@ EN_DAY_FIRST_RE = re.compile(
     re.IGNORECASE,
 )
 TIME_RE = re.compile(
-    r"(?<!\d)(?P<h1>[01]?\d|2[0-3])\s*:\s*(?P<m1>[0-5]\d)"
-    r"(?:\s*(?:-|–|—|~|～|至|到)\s*(?P<h2>[01]?\d|2[0-3])\s*:\s*(?P<m2>[0-5]\d))?"
+    r"(?<!\d)(?P<h1>[01]?\d|2[0-3])\s*:\s*(?P<m1>[0-5]\d)(?::[0-5]\d)?"
+    r"(?:\s*(?:-|–|—|~|～|至|到)\s*(?P<h2>[01]?\d|2[0-3])\s*:\s*(?P<m2>[0-5]\d)(?::[0-5]\d)?)?"
 )
 
 EN_TIME_RANGE_RE = re.compile(
@@ -95,7 +95,7 @@ DURATION_PATTERNS: tuple[re.Pattern[str], ...] = (
     ),
     re.compile(
         r"(?P<n>\d{1,3}(?:\.\d+)?)\s*(?P<unit>分钟|min(?:ute)?s?|小时|h(?:our)?s?)"
-        r"\s*(?:的)?(?:考试|笔试|测评|作答|答题|面试|面谈)",
+        r"\s*(?:的)?(?:考试|笔试|测评|作答|答题|面试|面谈)(?!官)",
         re.IGNORECASE,
     ),
     re.compile(
@@ -202,7 +202,7 @@ DEADLINE_SUFFIX_RULES: tuple[tuple[re.Pattern[str], float], ...] = (
     (re.compile(r".{0,20}(?:截止|失效|到期)", re.I), 9),
     (re.compile(r"(?:deadline|due|before|no later than)", re.I), 5),
 )
-WINDOW_CONNECTOR_RE = re.compile(r"^\s*(?:至|到|—|–|~|～|to)\s*$", re.I)
+WINDOW_CONNECTOR_RE = re.compile(r"^\s*(?:至|到|—|–|-|~|～|to)\s*$", re.I)
 BLACKOUT_CONTEXT_RE = re.compile(
     r"暂时锁定|锁定无法|无法作答|不可作答|避开(?:此|该)?(?:时间)?段"
     r"|维护(?:时段|期间)|产品升级|系统维护|暂停(?:作答|面试|服务)",
@@ -276,6 +276,9 @@ def normalize_timing_text(text: str) -> str:
     text = unicodedata.normalize("NFKC", text or "")
     text = text.replace("\u00a0", " ").replace("\u200b", "").replace("\r\n", "\n").replace("\r", "\n")
     text = re.sub(r"[ \t]+", " ", text)
+    # "24:00" marks the end of the day; keeping it as 00:00 would move the
+    # deadline back to the start of the same date.
+    text = re.sub(r"(?<!\d)24[:：]00(?!\d)", "23:59", text)
     text = EN_TIME_RANGE_RE.sub(_replace_en_range, text)
     text = EN_TIME_SINGLE_RE.sub(_replace_en_single, text)
     text = CN_PERIOD_COLON_RE.sub(_replace_cn_period_colon, text)
@@ -326,7 +329,7 @@ def _replace_cn_point(match: re.Match[str]) -> str:
         return match.group(0)
     hour = _period_hour(hour, match.group("period"))
     if hour == 24:
-        hour = 0
+        return "23:59"
     return f"{hour:02d}:{minute:02d}"
 
 
@@ -610,7 +613,11 @@ def extract_timings(
             item.deadline_score,
             is_future,
             1 if item.time_known else 0,
-            -item.start_dt.timestamp(),
+            # Within one evidence quote (for example "9月30日生效，10月7日
+            # 失效"), the later mention is the actual deadline.  Preferring the
+            # earlier timestamp here would turn the window start into the
+            # deadline.
+            item.start_dt.timestamp(),
         )
 
     chosen_exam = max(exam_candidates, key=exam_rank) if exam_candidates else None

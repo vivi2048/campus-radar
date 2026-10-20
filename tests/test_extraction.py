@@ -7,6 +7,7 @@ import pytest
 
 from app.extract.dates import extract_timings, normalize_timing_text
 from app.extract.classify import classify_email
+from app.extract.fields import extract_fields
 from app.extract.pipeline import analyze_email
 from app.mail.mime import EmailLink, ParsedEmail, parse_raw_email
 
@@ -69,6 +70,33 @@ def test_offline_exam_afternoon_range_and_confirmation_deadline():
     assert timing.exam_end == "2026-10-25T16:30+08:00"
     assert timing.deadline == "2026-10-23T23:59+08:00"
     assert timing.duration_minutes == 120
+
+
+def test_exam_address_line_with_url_is_not_location():
+    url = "https://exam.nowcoder.com/cts/17529695/summary?id=abc"
+    fields = extract_fields(
+        "中国电信线上笔试邀请",
+        (
+            "恭喜您进入中国电信湖北分公司校园招聘线上笔试环节。\n"
+            "考试地址：\n"
+            f"计算机类：北京时间10月17日 09:00-11:00（周六），笔试地址：{url}"
+        ),
+        "中国电信招聘",
+        "campus@chinatelecom.com.cn",
+        [EmailLink(url=url)],
+    )
+    assert fields.exam_url == url
+    assert fields.location is None
+    assert fields.mode == "online"
+
+    physical = extract_fields(
+        "线下笔试邀请",
+        "考试地点：北京市海淀区中关村大街1号 A座 301",
+        "示例公司",
+        "hr@example.com",
+        [],
+    )
+    assert "中关村大街" in (physical.location or "")
 
 
 def test_english_assessment_time_and_duration():
@@ -415,6 +443,55 @@ def test_received_email_possessive_and_bare_day_windows():
     assert third.deadline == "2026-10-20T10:00+08:00"
     assert third.exam_start == "2026-10-18T10:00+08:00"
     assert third.start_is_window is True
+
+
+def test_deadline_window_uses_closing_time():
+    timing = extract_timings(
+        "本次测试邀请于2026年09月30日 11:59生效，"
+        "于2026年10月07日 12:00失效。",
+        RECEIVED,
+    )
+    assert timing.deadline == "2026-10-07T12:00+08:00"
+    assert timing.deadline_time_known is True
+
+    ranged = extract_timings(
+        "考试时间：2026-10-19 19:00:00-2026-10-19 23:59:59",
+        RECEIVED,
+    )
+    assert ranged.exam_start == "2026-10-19T19:00+08:00"
+    assert ranged.deadline == "2026-10-19T23:59+08:00"
+
+
+def test_24_oclock_is_end_of_day():
+    timing = extract_timings(
+        "截止时间：请务必于北京时间2026年10月22日晚24点前确认是否参加笔试",
+        RECEIVED,
+    )
+    assert timing.deadline == "2026-10-22T23:59+08:00"
+    assert timing.deadline_time_known is True
+
+
+def test_interview_waiting_threshold_is_not_duration():
+    timing = extract_timings(
+        "面试时间：2026-10-10 10:00\n"
+        "如果超过面试约定时间 5 分钟面试官仍未上线，请与 HR 联系。",
+        RECEIVED,
+        kind="interview",
+    )
+    assert timing.exam_start == "2026-10-10T10:00+08:00"
+    assert timing.duration_minutes is None
+
+
+def test_ai_interview_round_from_subject():
+    fields = extract_fields(
+        "【宁德时代】2027届校园招聘AI面试邀请",
+        "现邀请您参与完成AI面试，整场面试时间约为15分钟。",
+        "CATL",
+        "catl@example.com",
+        [],
+        kind="interview",
+    )
+    assert fields.interview_round == "AI面试"
 
 
 def test_normalize_time_variants():

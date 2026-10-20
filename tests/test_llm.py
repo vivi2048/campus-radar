@@ -145,6 +145,128 @@ def test_evidence_reparses_start_and_deadline_locally():
     assert analysis.timing.deadline == "2026-10-20T18:00+08:00"
 
 
+def test_evidence_deadline_window_uses_closing_time():
+    parsed = _parsed(
+        "测评邀请",
+        "本次测试邀请于2026年09月30日 11:59生效，"
+        "于2026年10月07日 12:00失效。",
+    )
+    analysis = build_analysis_from_payload(
+        {
+            "category": "exam_invite",
+            "actionable": True,
+            "is_event": True,
+            "kind": "exam",
+            "confidence": 0.9,
+            "company": "示例科技",
+            "start": "2026-09-30T11:59:00+08:00",
+            "time_known": True,
+            "deadline": "2026-10-07T12:00:00+08:00",
+            "deadline_time_known": True,
+            "evidence": {
+                "start": "本次测试邀请于2026年09月30日 11:59生效",
+                "deadline": (
+                    "本次测试邀请于2026年09月30日 11:59生效，"
+                    "于2026年10月07日 12:00失效"
+                ),
+            },
+        },
+        parsed,
+    )
+    assert analysis is not None and analysis.timing is not None
+    assert analysis.timing.deadline == "2026-10-07T12:00+08:00"
+
+
+def test_evidence_opening_only_keeps_model_deadline():
+    parsed = _parsed(
+        "笔试邀请",
+        "本次测试邀请于2026年10月14日 09:01生效，请在60分钟内完成测试。",
+    )
+    analysis = build_analysis_from_payload(
+        {
+            "category": "exam_invite",
+            "actionable": True,
+            "is_event": True,
+            "kind": "exam",
+            "confidence": 0.9,
+            "company": "示例科技",
+            "start": "2026-10-14T09:01:00+08:00",
+            "time_known": True,
+            "deadline": "2026-10-21T09:01:00+08:00",
+            "deadline_time_known": True,
+            "evidence": {
+                "start": "本次测试邀请于2026年10月14日 09:01生效",
+                "deadline": "本次测试邀请于2026年10月14日 09:01生效",
+            },
+        },
+        parsed,
+    )
+    assert analysis is not None and analysis.timing is not None
+    assert analysis.timing.deadline == "2026-10-21T09:01+08:00"
+
+
+def test_evidence_exam_range_uses_window_close():
+    parsed = _parsed(
+        "笔试邀请",
+        "考试时间：2026-09-29 00:00:00 ~ 2026-09-30 00:00:00，考试时长120分钟。",
+    )
+    analysis = build_analysis_from_payload(
+        {
+            "category": "exam_invite",
+            "actionable": True,
+            "is_event": True,
+            "kind": "exam",
+            "confidence": 0.9,
+            "company": "示例科技",
+            "start": "2026-09-29T00:00:00+08:00",
+            "time_known": True,
+            "deadline": "2026-09-30T00:00:00+08:00",
+            "deadline_time_known": True,
+            "duration_minutes": 120,
+            "start_is_window": True,
+            "evidence": {
+                "start": "考试时间：2026-09-29 00:00:00",
+                "deadline": (
+                    "考试时间：2026-09-29 00:00:00 ~ "
+                    "2026-09-30 00:00:00"
+                ),
+            },
+        },
+        parsed,
+    )
+    assert analysis is not None and analysis.timing is not None
+    assert analysis.timing.exam_start == "2026-09-29T00:00+08:00"
+    assert analysis.timing.deadline == "2026-09-30T00:00+08:00"
+
+
+def test_llm_sanitizes_full_line_url_and_location():
+    analysis = build_analysis_from_payload(
+        {
+            "category": "exam_invite",
+            "actionable": True,
+            "is_event": True,
+            "kind": "exam",
+            "confidence": 0.9,
+            "company": "中国电信",
+            "start": "2026-10-17T09:00:00+08:00",
+            "time_known": True,
+            "url": (
+                "计算机类：北京时间10月17日 09:00-11:00（周六），"
+                "笔试地址：https://exam.nowcoder.com/cts/17529695/summary?id=abc"
+            ),
+            "location": (
+                "计算机类：北京时间10月17日 09:00-11:00（周六），"
+                "笔试地址：https://exam.nowcoder.com/cts/17529695/summary?id=abc"
+            ),
+        }
+    )
+    assert analysis is not None and analysis.fields is not None
+    assert analysis.fields.exam_url == (
+        "https://exam.nowcoder.com/cts/17529695/summary?id=abc"
+    )
+    assert analysis.fields.location is None
+
+
 def test_llm_window_start_does_not_fabricate_end():
     parsed = _parsed(
         "笔试邀请",
@@ -321,17 +443,20 @@ def test_llm_settings_encrypt_key_and_clear(tmp_path):
             "model": "demo-model",
             "api_key": "sk-test-secret",
             "max_calls_per_sync": 150,
+            "concurrency": 6,
         },
     )
     assert view["active"] is True
     assert view["has_api_key"] is True
     assert "api_key" not in view
     assert view["max_calls_per_sync"] == 150
+    assert view["concurrency"] == 6
     stored = db.fetch_one("SELECT value FROM app_settings WHERE key = 'llm_api_key_enc'")
     assert stored and stored["value"] != "sk-test-secret"
 
     config = load_llm_config(db, vault)
     assert config.api_key == "sk-test-secret"
+    assert config.concurrency == 6
     assert config.chat_url == "https://api.example.com/v1/chat/completions"
 
     cleared = save_llm_settings(
@@ -346,6 +471,7 @@ def test_llm_settings_encrypt_key_and_clear(tmp_path):
     )
     assert cleared["active"] is False
     assert get_llm_settings_view(db)["has_api_key"] is False
+    assert get_llm_settings_view(db)["concurrency"] == 4
 
 
 def test_llm_settings_require_endpoint_when_key_present(tmp_path):

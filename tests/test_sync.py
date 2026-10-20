@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import logging
+import threading
 from pathlib import Path
 
 import pytest
@@ -301,6 +302,48 @@ def test_llm_error_falls_back_to_local_rules(sync_setup):
     assert event["exam_start"] == "2026-10-23T14:00+08:00"
     assert event["needs_review"] == 1
     assert "大模型识别失败" in (event["auto_notes"] or "")
+
+
+def test_llm_calls_run_in_parallel_with_configured_concurrency(sync_setup):
+    db, vault, account, _, messages = sync_setup
+
+    class ParallelLLM:
+        max_calls = 10
+        concurrency = 3
+
+        def __init__(self):
+            self._lock = threading.Lock()
+            self._release = threading.Event()
+            self.active = 0
+            self.max_active = 0
+
+        def should_consider(self, parsed, analysis):
+            return True
+
+        def analyze(self, parsed):
+            with self._lock:
+                self.active += 1
+                self.max_active = max(self.max_active, self.active)
+                if self.active >= self.concurrency:
+                    self._release.set()
+            self._release.wait(timeout=2)
+            with self._lock:
+                self.active -= 1
+            return None
+
+    llm = ParallelLLM()
+    service = SyncService(
+        db,
+        vault,
+        logging.getLogger("campus-radar-test-llm-concurrency"),
+        session_factory=lambda account: FakeSession(messages),
+        llm_factory=lambda: llm,
+    )
+    result = service.sync_account(account["id"])
+    assert result.success
+    assert result.counts["llm_called"] == 5
+    assert llm.max_active == 3
+    assert result.counts["llm_rejected"] == 5
 
 
 def test_llm_rejection_is_not_reprocessed_on_next_sync(sync_setup):

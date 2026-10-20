@@ -87,6 +87,7 @@ INTERVIEW_ACCESS_PATTERNS: tuple[tuple[re.Pattern[str], str], ...] = (
 INTERVIEW_ROUND_RE = re.compile(
     r"(?:面试轮次|面试阶段|轮次)\s*[:：]\s*([^\n，。；;]{1,20})"
     r"|(第[一二三四五六七八九十\d]+轮(?:面试)?)"
+    r"|(AI\s*面(?:试)?)(?!官)"
     r"|(?<![A-Za-z统])(HR\s*面|hr\s*面|终面|终试|一面|二面|三面|四面|初面|复面|初试|复试|群面|技术面|专业面|综合面|业务面|主管面|经理面|交叉面|加面)(?=面试|面|试|[\s：:，,、\-—。；;！!]|$)"
     r"|(?<![A-Za-z])(first|second|third|final|technical|behavioral|HR)\s+round(?:\s+interview)?",
     re.IGNORECASE,
@@ -477,7 +478,7 @@ def extract_location(body: str) -> str | None:
         location = re.split(r"(?:考试时间|笔试时间|面试时间|面谈时间|入场时间|面试形式|交通|联系|电话)", location)[0].strip(" ：:，,。；;")
         if not location or location in {"线上", "在线", "见邮件", "另行通知", "待定"}:
             continue
-        if re.fullmatch(r"https?://\S+", location):
+        if re.search(r"https?://|www\.", location, re.IGNORECASE):
             continue
         return location[:100]
     return None
