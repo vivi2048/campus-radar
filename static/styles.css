@@ -2457,7 +2457,7 @@ input[type="password"]::-ms-clear {
 }
 
 .source-body {
-  max-height: 360px;
+  max-height: min(560px, calc(100vh / var(--ui-zoom) - 295px));
   margin: 0;
   padding: 14px;
   overflow: auto;
@@ -3923,7 +3923,7 @@ body {
 }
 
 .drawer-section-title {
-  font-size: 11px;
+  font-size: 12px;
 }
 
 .field-label {
