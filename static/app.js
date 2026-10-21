@@ -1625,7 +1625,15 @@ function closeDrawer({ restoreFocus = true } = {}) {
 }
 
 function focusDrawer() {
-  el.drawer.querySelector("[data-action='close-drawer']")?.focus({ preventScroll: true });
+  el.drawer.focus({ preventScroll: true });
+}
+
+function drawerCancelFooter() {
+  return `<div class="drawer-footer">
+    <div class="drawer-footer-actions">
+      <button class="button button-ghost button-small" type="button" data-action="close-drawer">取消</button>
+    </div>
+  </div>`;
 }
 
 function drawerHeaderMarkup(event, mode, loading, error) {
@@ -1650,7 +1658,6 @@ function drawerHeaderMarkup(event, mode, loading, error) {
       </div>
       <p class="drawer-role">${escapeHtml(role)}</p>
     </div>
-    <button class="icon-button drawer-close" type="button" data-action="close-drawer" aria-label="关闭详情">${icon("x", 19)}</button>
   </div>`;
 }
 
@@ -1693,7 +1700,8 @@ function renderDrawer() {
           <div class="skeleton-line"></div>
           <div class="skeleton-line is-short"></div>
         </div>
-      </div>`;
+      </div>
+      ${drawerCancelFooter()}`;
     return;
   }
 
@@ -1706,7 +1714,8 @@ function renderDrawer() {
           <p>${escapeHtml(error)}</p>
           <button class="button button-ghost button-small" type="button" data-action="retry-drawer">重试</button>
         </div>
-      </div>`;
+      </div>
+      ${drawerCancelFooter()}`;
     return;
   }
 
@@ -2779,7 +2788,7 @@ function trapDrawerFocus(event) {
   if (!focusable.length) return;
   const first = focusable[0];
   const last = focusable.at(-1);
-  if (event.shiftKey && (document.activeElement === first || !el.drawer.contains(document.activeElement))) {
+  if (event.shiftKey && (document.activeElement === first || document.activeElement === el.drawer || !el.drawer.contains(document.activeElement))) {
     event.preventDefault();
     last.focus();
   } else if (!event.shiftKey && document.activeElement === last) {

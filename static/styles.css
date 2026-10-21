@@ -71,7 +71,7 @@ strong {
 }
 
 html {
-  min-width: 320px;
+  min-width: calc(320px / var(--ui-zoom));
   background: var(--bg);
   zoom: var(--ui-zoom);
 }
@@ -420,6 +420,7 @@ summary:focus-visible {
   font-weight: 600;
   letter-spacing: -0.045em;
   line-height: 1.08;
+  text-wrap: balance;
 }
 
 .view-heading em {
@@ -433,7 +434,7 @@ summary:focus-visible {
   color: var(--muted);
   font-size: 14px;
   line-height: 1.7;
-  text-wrap: pretty;
+  text-wrap: balance;
 }
 
 .header-actions {
@@ -581,6 +582,30 @@ summary:focus-visible {
 .icon-button:disabled {
   cursor: default;
   opacity: 0.4;
+}
+
+.mobile-nav-button {
+  width: 30px;
+  height: 30px;
+  border-radius: 8px;
+  background: var(--surface);
+}
+
+.mobile-nav-button svg {
+  width: 14px;
+  height: 14px;
+}
+
+.sidebar-close.mobile-nav-button {
+  color: rgba(255, 255, 255, 0.72);
+  border-color: rgba(255, 255, 255, 0.16);
+  background: rgba(255, 255, 255, 0.05);
+}
+
+.sidebar-close.mobile-nav-button:hover {
+  color: #fff;
+  border-color: rgba(255, 255, 255, 0.3);
+  background: rgba(255, 255, 255, 0.1);
 }
 
 .text-button {
@@ -2247,7 +2272,7 @@ input[type="password"]::-ms-clear {
   z-index: 130;
   display: flex;
   flex-direction: column;
-  width: min(590px, 100vw);
+  width: min(590px, calc(100vw / var(--ui-zoom)));
   overflow: hidden;
   border-left: 1px solid rgba(255, 255, 255, 0.3);
   background: var(--surface);
@@ -2261,7 +2286,7 @@ input[type="password"]::-ms-clear {
 }
 
 .event-drawer.is-editing-wide {
-  width: min(1000px, 100vw);
+  width: min(1000px, calc(100vw / var(--ui-zoom)));
 }
 
 .drawer-header {
@@ -2310,10 +2335,6 @@ input[type="password"]::-ms-clear {
   margin-top: 4px;
   color: var(--muted);
   font-size: 12px;
-}
-
-.drawer-close {
-  flex: 0 0 auto;
 }
 
 .drawer-scroll {
@@ -2896,7 +2917,7 @@ input[type="password"]::-ms-clear {
   }
 
   .library-table-head {
-    grid-template-columns: minmax(90px, 0.85fr) minmax(115px, 1.7fr) 48px minmax(128px, 1.15fr) 52px;
+    grid-template-columns: minmax(90px, 0.85fr) minmax(100px, 1.5fr) 48px minmax(160px, 1.4fr) 52px;
     gap: 10px;
   }
 
@@ -2905,7 +2926,7 @@ input[type="password"]::-ms-clear {
   }
 
   .library-row-main {
-    grid-template-columns: minmax(90px, 0.85fr) minmax(115px, 1.7fr) 48px minmax(128px, 1.15fr) 52px;
+    grid-template-columns: minmax(90px, 0.85fr) minmax(100px, 1.5fr) 48px minmax(160px, 1.4fr) 52px;
     gap: 10px;
   }
 
@@ -2915,6 +2936,16 @@ input[type="password"]::-ms-clear {
 }
 
 @media (max-width: 1080px) {
+  .view-header {
+    align-items: flex-start;
+    flex-direction: column;
+    gap: 18px;
+  }
+
+  .header-actions {
+    padding-bottom: 0;
+  }
+
   .library-row-actions {
     padding-right: 10px;
     opacity: 1;
@@ -2934,6 +2965,22 @@ input[type="password"]::-ms-clear {
 
   .add-account-column {
     order: 2;
+  }
+}
+
+@media (min-width: 761px) and (max-width: 1220px) {
+  .library-toolbar {
+    align-items: stretch;
+    flex-direction: column;
+  }
+
+  .library-tools {
+    width: 100%;
+    margin-left: 0;
+  }
+
+  .library-tools .search-field {
+    flex: 1 1 218px;
   }
 }
 
@@ -2993,8 +3040,8 @@ input[type="password"]::-ms-clear {
   }
 
   .mobile-header-spacer {
-    width: 38px;
-    height: 38px;
+    width: 30px;
+    height: 30px;
   }
 
   .page {
@@ -3036,6 +3083,10 @@ input[type="password"]::-ms-clear {
 
   .header-actions .button {
     flex: 1;
+  }
+
+  .header-actions .button:only-child {
+    flex: 0 0 auto;
   }
 
   .focus-card {
@@ -3191,7 +3242,7 @@ input[type="password"]::-ms-clear {
   }
 
   .event-drawer {
-    width: 100vw;
+    width: calc(100vw / var(--ui-zoom));
   }
 
   .drawer-header {
@@ -3240,6 +3291,17 @@ input[type="password"]::-ms-clear {
     font-size: 31px;
   }
 
+  .library-toolbar .filter-tabs {
+    display: grid;
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+    gap: 2px;
+  }
+
+  .library-toolbar .filter-tab {
+    justify-content: center;
+    padding: 0 6px;
+  }
+
   .focus-kicker {
     font-size: 8.5px;
   }
@@ -3276,11 +3338,17 @@ input[type="password"]::-ms-clear {
 
   .drawer-footer {
     flex-wrap: wrap;
+    padding-inline: 14px;
   }
 
   .drawer-footer-actions {
     flex: 1;
     justify-content: flex-end;
+    gap: 4px;
+  }
+
+  .drawer-footer .button-small {
+    padding: 0 10px;
   }
 
 }
