@@ -167,6 +167,27 @@ def test_account_creation_is_rejected_without_network(client, monkeypatch):
     assert "授权码" in response.json()["detail"]
 
 
+def test_account_creation_defaults_to_seven_sync_days(client, monkeypatch):
+    import app.services.accounts as accounts_service
+
+    monkeypatch.setattr(accounts_service, "verify_account", lambda account: None)
+    monkeypatch.setattr(client.app.state.sync_manager, "trigger", lambda *args, **kwargs: True)
+
+    response = client.post(
+        "/api/accounts",
+        json={
+            "provider": "qq",
+            "email": "student@qq.com",
+            "password": "test-auth-code",
+        },
+    )
+    assert response.status_code == 201
+    account = response.json()["account"]
+    assert account["sync_days"] == 7
+
+    assert client.delete(f"/api/accounts/{account['id']}").status_code == 200
+
+
 def test_account_crud_without_network(client, monkeypatch, settings):
     import app.services.accounts as accounts_service
 

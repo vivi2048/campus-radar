@@ -77,7 +77,7 @@ class AccountCreate(BaseModel):
     imap_host: str = ""
     imap_port: int = 993
     folder: str = "INBOX"
-    sync_days: int = 30
+    sync_days: int = 7
     auto_sync: bool = True
 
 

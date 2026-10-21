@@ -1433,9 +1433,9 @@ function renderAccountForm() {
       <div class="form-field">
         <label class="field-label" for="account-sync-days">同步范围</label>
         <select class="select" id="account-sync-days" name="sync_days">
-          <option value="7">最近 7 天</option>
+          <option value="7" selected>最近 7 天</option>
           <option value="14">最近 14 天</option>
-          <option value="30" selected>最近 30 天</option>
+          <option value="30">最近 30 天</option>
           <option value="60">最近 60 天</option>
           <option value="90">最近 90 天</option>
         </select>
@@ -2338,7 +2338,7 @@ async function submitAccountForm(form) {
   const email = String(data.get("email") || "").trim();
   const password = String(data.get("password") || "");
   const label = String(data.get("label") || "").trim();
-  const syncDays = Number(data.get("sync_days") || 30);
+  const syncDays = Number(data.get("sync_days") || 7);
   const providerId = detectProviderId(email);
   const provider = providerById(providerId);
 
@@ -2405,7 +2405,7 @@ async function submitAccountForm(form) {
 
 function accountSyncDays(account) {
   const raw = Number(account.sync_days);
-  return Number.isFinite(raw) && raw > 0 ? raw : 30;
+  return Number.isFinite(raw) && raw > 0 ? raw : 7;
 }
 
 function accountSyncRangeOptions(account) {

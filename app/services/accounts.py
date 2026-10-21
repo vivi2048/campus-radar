@@ -151,7 +151,7 @@ def create_account(
 
     host, port = _provider_connection(provider, payload)
     folder = _clean_folder(payload.get("folder"))
-    sync_days = _clean_sync_days(payload.get("sync_days", 30))
+    sync_days = _clean_sync_days(payload.get("sync_days", 7))
     auto_sync = bool(payload.get("auto_sync", True))
     label = _clean_label(payload.get("label"), provider, email)
 

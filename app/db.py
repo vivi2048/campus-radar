@@ -17,7 +17,7 @@ CREATE TABLE IF NOT EXISTS accounts (
     username TEXT NOT NULL,
     password_enc TEXT NOT NULL,
     folder TEXT NOT NULL DEFAULT 'INBOX',
-    sync_days INTEGER NOT NULL DEFAULT 30,
+    sync_days INTEGER NOT NULL DEFAULT 7,
     max_messages INTEGER NOT NULL DEFAULT 300,
     auto_sync INTEGER NOT NULL DEFAULT 1,
     enabled INTEGER NOT NULL DEFAULT 1,
