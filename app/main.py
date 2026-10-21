@@ -26,6 +26,7 @@ from .schemas import AISettingsUpdate, AccountCreate, AccountUpdate, EventPayloa
 from .security import SecretBox
 from .services.accounts import (
     AccountError,
+    clear_account_mail_data,
     create_account,
     delete_account,
     get_account,
@@ -269,6 +270,17 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         if not sync_manager.trigger(account_id, reason="rescan", rescan=True):
             raise HTTPException(status_code=409, detail="这个邮箱正在同步中，请稍候。")
         return {"started": True, "rescan": True, "account": get_account(db, account_id)}
+
+    @app.delete("/api/accounts/{account_id}/messages")
+    async def accounts_clear_messages(account_id: int, reset_cursor: bool = False):
+        if sync_manager.is_active(account_id):
+            raise HTTPException(status_code=409, detail="邮箱正在同步，请等同步结束后再清空。")
+        result = clear_account_mail_data(
+            db, account_id, reset_cursor=reset_cursor
+        )
+        if result is None:
+            raise HTTPException(status_code=404, detail="邮箱账号不存在")
+        return {"cleared": True, "reset_cursor": reset_cursor, **result}
 
     @app.delete("/api/accounts/{account_id}")
     async def accounts_delete(account_id: int):

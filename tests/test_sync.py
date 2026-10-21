@@ -240,6 +240,58 @@ def test_llm_event_fills_missing_time_from_local_rules(sync_setup):
     assert "大模型识别" in (event["auto_notes"] or "")
 
 
+def test_llm_event_fills_missing_deadline_from_stage_rule(sync_setup):
+    db, vault, account, _, _ = sync_setup
+    raw = (FIXTURES / "catl_ai_interview.eml").read_bytes()
+    payload = {
+        "is_event": True,
+        "kind": "interview",
+        "confidence": 0.93,
+        "company": "宁德时代",
+        "interview_round": "AI面试",
+        "start": None,
+        "time_known": False,
+        "deadline": None,
+        "deadline_time_known": False,
+        "duration_minutes": 15,
+        "platform": "微信小程序",
+        "url": "https://bsurl.cn/v2/pk7HFuB2",
+        "mode": "online",
+        "notes": ["大模型没有给出截止时间"],
+    }
+
+    class NoDeadlineLLM:
+        max_calls = 10
+
+        def should_consider(self, parsed, analysis):
+            return True
+
+        def analyze(self, parsed):
+            return build_analysis_from_payload(payload)
+
+    service = SyncService(
+        db,
+        vault,
+        logging.getLogger("campus-radar-test-llm-deadline-merge"),
+        session_factory=lambda account: FakeSession({1: raw}),
+        llm_factory=lambda: NoDeadlineLLM(),
+    )
+    result = service.sync_account(account["id"])
+    assert result.success
+    assert result.counts["llm_matched"] == 1
+    event = db.fetch_one("SELECT * FROM events WHERE company = '宁德时代'")
+    assert event is not None
+    assert event["kind"] == "interview"
+    assert event["interview_round"] == "AI面试"
+    assert event["exam_url"] == "https://bsurl.cn/v2/pk7HFuB2"
+    assert event["platform"] == "微信小程序"
+    assert event["exam_start"] == "2026-10-15T14:03+08:00"
+    assert event["deadline"] == "2026-10-17T14:03+08:00"
+    assert event["duration_minutes"] == 15
+    assert event["needs_review"] == 1
+    assert "48" in (event["auto_notes"] or "")
+
+
 def test_llm_rejection_vetoes_locally_accepted_event(sync_setup):
     db, vault, account, _, _ = sync_setup
     raw = (FIXTURES / "interview_invite.eml").read_bytes()

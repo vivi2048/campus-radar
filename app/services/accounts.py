@@ -283,3 +283,48 @@ def delete_account(db: Database, account_id: int) -> bool:
         return False
     db.execute("DELETE FROM accounts WHERE id = ?", (account_id,))
     return True
+
+
+def clear_account_mail_data(
+    db: Database, account_id: int, *, reset_cursor: bool = False
+) -> dict[str, int] | None:
+    """Delete every recognized record for one mailbox, keeping the account."""
+    with db.connection() as conn:
+        row = conn.execute(
+            "SELECT id FROM accounts WHERE id = ?", (account_id,)
+        ).fetchone()
+        if not row:
+            return None
+        event_count = int(
+            conn.execute(
+                "SELECT COUNT(*) AS count FROM events WHERE account_id = ?",
+                (account_id,),
+            ).fetchone()["count"]
+        )
+        message_count = int(
+            conn.execute(
+                "SELECT COUNT(*) AS count FROM seen_messages WHERE account_id = ?",
+                (account_id,),
+            ).fetchone()["count"]
+        )
+        conn.execute(
+            "DELETE FROM seen_messages WHERE account_id = ?", (account_id,)
+        )
+        conn.execute("DELETE FROM events WHERE account_id = ?", (account_id,))
+        if reset_cursor:
+            conn.execute(
+                """
+                UPDATE accounts
+                SET last_sync_counts = NULL, last_uid = 0, uidvalidity = NULL,
+                    last_sync_at = NULL, last_sync_status = 'idle',
+                    last_sync_error = NULL, updated_at = ?
+                WHERE id = ?
+                """,
+                (utc_now_iso(), account_id),
+            )
+        else:
+            conn.execute(
+                "UPDATE accounts SET last_sync_counts = NULL, updated_at = ? WHERE id = ?",
+                (utc_now_iso(), account_id),
+            )
+    return {"events": event_count, "messages": message_count}

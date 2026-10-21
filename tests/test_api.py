@@ -190,17 +190,19 @@ def test_account_crud_without_network(client, monkeypatch, settings):
     assert account["email"] == "student@qq.com"
     assert "password" not in account
     assert account["last_sync_status"] == "idle"
+    assert account["sync_days"] == 14
 
     accounts = client.get("/api/accounts").json()
     assert len(accounts) == 1
 
     updated = client.patch(
         f"/api/accounts/{account['id']}",
-        json={"auto_sync": False, "label": "招聘邮箱"},
+        json={"auto_sync": False, "label": "招聘邮箱", "sync_days": 60},
     )
     assert updated.status_code == 200
     assert updated.json()["auto_sync"] is False
     assert updated.json()["label"] == "招聘邮箱"
+    assert updated.json()["sync_days"] == 60
 
     assert client.post(f"/api/accounts/{account['id']}/sync").status_code == 202
     assert client.post(f"/api/accounts/{account['id']}/rescan").status_code == 202
@@ -209,6 +211,154 @@ def test_account_crud_without_network(client, monkeypatch, settings):
     deleted = client.delete(f"/api/accounts/{account['id']}")
     assert deleted.status_code == 200
     assert client.get("/api/accounts").json() == []
+
+
+def test_clear_account_messages_keeps_account_and_other_mailboxes(
+    client, monkeypatch
+):
+    import app.services.accounts as accounts_service
+
+    monkeypatch.setattr(accounts_service, "verify_account", lambda account: None)
+    monkeypatch.setattr(
+        client.app.state.sync_manager, "trigger", lambda *args, **kwargs: True
+    )
+
+    def create_account(email: str) -> dict:
+        response = client.post(
+            "/api/accounts",
+            json={
+                "provider": "qq",
+                "email": email,
+                "password": "test-auth-code",
+            },
+        )
+        assert response.status_code == 201
+        return response.json()["account"]
+
+    first = create_account("first@qq.com")
+    second = create_account("second@qq.com")
+    db = client.app.state.db
+    now = "2026-10-21T00:00:00+00:00"
+    db.execute(
+        "UPDATE accounts SET last_uid = 42, uidvalidity = 'v1', "
+        "last_sync_status = 'ok', last_sync_at = ?, last_sync_counts = '{}' "
+        "WHERE id = ?",
+        (now, first["id"]),
+    )
+    first_event = db.execute(
+        "INSERT INTO events (account_id, kind, company, created_at, updated_at) "
+        "VALUES (?, 'exam', '甲公司', ?, ?)",
+        (first["id"], now, now),
+    )
+    db.execute(
+        "INSERT INTO events (account_id, kind, company, created_at, updated_at) "
+        "VALUES (?, 'interview', '乙公司', ?, ?)",
+        (second["id"], now, now),
+    )
+    db.execute(
+        "INSERT INTO events (kind, company, created_at, updated_at) "
+        "VALUES ('exam', '手动记录', ?, ?)",
+        (now, now),
+    )
+    db.execute(
+        "INSERT INTO seen_messages (account_id, message_key, outcome, event_id, seen_at) "
+        "VALUES (?, 'first-message', 'created', ?, ?)",
+        (first["id"], first_event, now),
+    )
+    db.execute(
+        "INSERT INTO seen_messages (account_id, message_key, outcome, event_id, seen_at) "
+        "VALUES (?, 'second-message', 'created', NULL, ?)",
+        (second["id"], now),
+    )
+
+    cleared = client.delete(f"/api/accounts/{first['id']}/messages")
+    assert cleared.status_code == 200
+    assert cleared.json() == {
+        "cleared": True,
+        "reset_cursor": False,
+        "events": 1,
+        "messages": 1,
+    }
+
+    accounts = client.get("/api/accounts").json()
+    assert {account["id"] for account in accounts} == {first["id"], second["id"]}
+    events = client.get("/api/events").json()
+    assert {event["company"] for event in events} == {"乙公司", "手动记录"}
+    seen = db.fetch_all("SELECT account_id, message_key FROM seen_messages")
+    assert seen == [{"account_id": second["id"], "message_key": "second-message"}]
+    first_row = db.fetch_one(
+        "SELECT last_uid, uidvalidity, last_sync_status, last_sync_counts "
+        "FROM accounts WHERE id = ?",
+        (first["id"],),
+    )
+    assert first_row == {
+        "last_uid": 42,
+        "uidvalidity": "v1",
+        "last_sync_status": "ok",
+        "last_sync_counts": None,
+    }
+
+    assert client.delete("/api/accounts/9999/messages").status_code == 404
+
+
+def test_clear_account_messages_can_reset_sync_cursor(client, monkeypatch):
+    import app.services.accounts as accounts_service
+
+    monkeypatch.setattr(accounts_service, "verify_account", lambda account: None)
+    monkeypatch.setattr(
+        client.app.state.sync_manager, "trigger", lambda *args, **kwargs: True
+    )
+    response = client.post(
+        "/api/accounts",
+        json={
+            "provider": "qq",
+            "email": "reset@qq.com",
+            "password": "test-auth-code",
+        },
+    )
+    assert response.status_code == 201
+    account = response.json()["account"]
+    db = client.app.state.db
+    now = "2026-10-21T00:00:00+00:00"
+    db.execute(
+        "UPDATE accounts SET last_uid = 42, uidvalidity = 'v1', "
+        "last_sync_status = 'ok', last_sync_at = ?, "
+        "last_sync_counts = '{\"created\": 1}' WHERE id = ?",
+        (now, account["id"]),
+    )
+    event_id = db.execute(
+        "INSERT INTO events (account_id, kind, company, created_at, updated_at) "
+        "VALUES (?, 'exam', '甲公司', ?, ?)",
+        (account["id"], now, now),
+    )
+    db.execute(
+        "INSERT INTO seen_messages (account_id, message_key, outcome, event_id, seen_at) "
+        "VALUES (?, 'reset-message', 'created', ?, ?)",
+        (account["id"], event_id, now),
+    )
+
+    cleared = client.delete(
+        f"/api/accounts/{account['id']}/messages?reset_cursor=true"
+    )
+    assert cleared.status_code == 200
+    assert cleared.json() == {
+        "cleared": True,
+        "reset_cursor": True,
+        "events": 1,
+        "messages": 1,
+    }
+    row = db.fetch_one(
+        "SELECT last_uid, uidvalidity, last_sync_status, last_sync_at, "
+        "last_sync_counts FROM accounts WHERE id = ?",
+        (account["id"],),
+    )
+    assert row == {
+        "last_uid": 0,
+        "uidvalidity": None,
+        "last_sync_status": "idle",
+        "last_sync_at": None,
+        "last_sync_counts": None,
+    }
 
 
 def test_ai_settings_api_encrypts_key_and_clear(client):

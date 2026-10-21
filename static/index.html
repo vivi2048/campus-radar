@@ -77,9 +77,27 @@
       <div class="confirm-mark" id="confirm-mark" aria-hidden="true"></div>
       <h2 id="confirm-title">确认操作</h2>
       <p id="confirm-message"></p>
+      <label class="confirm-option" data-confirm-option hidden>
+        <input type="checkbox" id="confirm-option">
+        <span id="confirm-option-label"></span>
+      </label>
       <div class="confirm-actions">
         <button class="button button-ghost" value="cancel" type="submit">取消</button>
         <button class="button button-danger" id="confirm-button" value="confirm" type="submit">确认</button>
+      </div>
+    </form>
+  </dialog>
+
+  <dialog class="confirm-dialog" id="account-settings-dialog" aria-label="同步设置">
+    <form class="confirm-card" id="account-settings-form">
+      <div class="form-field">
+        <label class="field-label" for="account-settings-sync-days">同步范围</label>
+        <select class="select" id="account-settings-sync-days" name="sync_days"></select>
+      </div>
+      <div class="form-error" data-form-error hidden></div>
+      <div class="confirm-actions">
+        <button class="button button-ghost" type="button" data-action="close-account-settings">取消</button>
+        <button class="button button-primary" type="submit">保存</button>
       </div>
     </form>
   </dialog>

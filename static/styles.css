@@ -1965,6 +1965,26 @@ summary:focus-visible {
   line-height: 1.65;
 }
 
+.account-top {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.account-settings-button {
+  flex: none;
+  width: 30px;
+  height: 30px;
+  border-radius: 8px;
+  background: var(--surface);
+}
+
+.account-settings-button svg {
+  width: 14px;
+  height: 14px;
+}
+
 .account-toolbar {
   display: flex;
   flex-wrap: wrap;
@@ -2594,6 +2614,33 @@ input[type="password"]::-ms-clear {
   font-size: 11.5px;
   line-height: 1.7;
   white-space: pre-line;
+}
+
+.confirm-option {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+  margin-top: 14px;
+  color: var(--ink-soft);
+  font-size: 11.5px;
+  line-height: 1.65;
+  cursor: pointer;
+}
+
+.confirm-option[hidden] {
+  display: none;
+}
+
+.confirm-option input {
+  flex: none;
+  width: 14px;
+  height: 14px;
+  margin: 2px 0 0;
+  accent-color: var(--accent);
+}
+
+.confirm-card .form-field {
+  margin-top: 0;
 }
 
 .confirm-actions {
@@ -3771,6 +3818,7 @@ input[type="password"]::-ms-clear {
   display: flex;
   flex-wrap: wrap;
   align-items: center;
+  justify-content: flex-end;
   gap: var(--card-row-gap);
   margin-top: var(--card-block-gap);
 }

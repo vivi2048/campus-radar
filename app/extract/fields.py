@@ -6,7 +6,13 @@ from dataclasses import dataclass
 
 from ..mail.mime import EmailLink
 from .company import canonicalize_company
-from .links import detect_platform, normalize_url, select_exam_link, select_interview_link
+from .links import (
+    detect_platform,
+    normalize_url,
+    select_exam_link,
+    select_interview_link,
+    select_labeled_link,
+)
 
 GENERIC_COMPANY_RE = re.compile(
     r"校园招聘|春季招聘|秋季招聘|社会招聘|招聘中心|招聘团队|招聘组|招聘助手|招聘"
@@ -577,7 +583,7 @@ def extract_fields(
     company = extract_company(subject, body, sender_name, sender_email)
     role = extract_role(subject, body, company)
     if kind == "interview":
-        selected = select_interview_link(links)
+        selected = select_interview_link(links) or select_labeled_link(body)
     else:
         selected = select_exam_link(links)
     exam_url = normalize_url(selected.url) if selected else None

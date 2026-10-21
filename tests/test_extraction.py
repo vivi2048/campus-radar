@@ -228,22 +228,65 @@ def test_maintenance_window_is_not_used_as_interview_time():
         datetime(2026, 10, 15, 6, 3, tzinfo=timezone.utc),
         kind="interview",
     )
-    assert timing.exam_start is None
-    assert timing.deadline is None
+    assert timing.exam_start == "2026-10-15T14:03+08:00"
+    assert timing.deadline == "2026-10-17T14:03+08:00"
+    assert timing.duration_minutes == 15
     assert timing.exam_start != "2026-09-19T00:00+08:00"
     assert timing.deadline != "2026-09-19T09:00+08:00"
 
 
-def test_deadline_for_another_email_is_not_applied():
+def test_deadline_mentioned_with_another_email_is_kept_for_review():
     text = "请留意另一封在线测评邀请邮件，并于收到邮件的48小时内完成作答。"
     received = datetime(2026, 10, 15, 6, 3, tzinfo=timezone.utc)
     interview = extract_timings(text, received, kind="interview")
-    assert interview.exam_start is None
-    assert interview.deadline is None
+    assert interview.exam_start == "2026-10-15T14:03+08:00"
+    assert interview.deadline == "2026-10-17T14:03+08:00"
+    assert interview.start_is_window is True
+    assert "其他安排" in (interview.deadline_note or "")
+    assert "核对" in (interview.deadline_note or "")
 
     assessment = extract_timings(text, received, kind="exam")
     assert assessment.exam_start == "2026-10-15T14:03+08:00"
     assert assessment.deadline == "2026-10-17T14:03+08:00"
+
+
+def test_catl_ai_interview_uses_stage_deadline_and_duration():
+    parsed = ParsedEmail(
+        subject="【宁德时代】2027届校园招聘AI面试邀请",
+        sender_name="宁德时代人力资源部",
+        sender_email="CATL-Recruitment1@catl.com",
+        received_at=datetime(2026, 10, 15, 6, 3, tzinfo=timezone.utc),
+        body_text=(
+            "同学， 您好！\n\n"
+            "感谢您投递宁德时代，现邀请您参与完成AI面试，整场面试时间约为15分钟。"
+            "我们会根据您的结果安排后续流程。本环节包含AI 面试和在线测评两项内容，"
+            "请留意查收另一封在线测评邀请邮件，并于收到邮件的48小时内完成作答。"
+            "测评结果为招聘重要参考，请您认真完成。本场 AI 面试安排如下：\n\n"
+            "A. 登录信息：\n\n"
+            "测评链接：https://bsurl.cn/v2/pk7HFuB2\n\n"
+            "此为你的专属测评链接，请勿转发他人。\n\n"
+            "本次AI面试仅支持手机端微信小程序作答。\n\n"
+            "注意：北京时间9月19日 00:00至9月19日09:00 AI面试官将进行产品升级，"
+            "AI面试暂时锁定无法作答，请您避开此时间段进行答题。\n\n"
+            "——宁德时代人力资源部\n"
+        ),
+        html_text="",
+        links=[EmailLink(url="https://bsurl.cn/v2/pk7HFuB2")],
+    )
+    analysis = analyze_email(parsed)
+    assert analysis.accepted
+    assert analysis.kind == "interview"
+    assert analysis.fields is not None and analysis.timing is not None
+    assert analysis.fields.company == "宁德时代"
+    assert analysis.fields.exam_url == "https://bsurl.cn/v2/pk7HFuB2"
+    assert analysis.fields.platform == "微信小程序"
+    assert analysis.timing.exam_start == "2026-10-15T14:03+08:00"
+    assert analysis.timing.deadline == "2026-10-17T14:03+08:00"
+    assert analysis.timing.duration_minutes == 15
+    assert analysis.timing.start_is_window is True
+    assert analysis.needs_review is True
+    assert "48" in (analysis.auto_notes or "")
+    assert "9月19日" not in (analysis.timing.deadline or "")
 
 
 def test_real_interview_time_survives_nearby_maintenance_window():
@@ -382,7 +425,7 @@ def test_info_session_thank_you_and_offer_are_rejected():
             "感谢您投递我公司的软件开发工程师职位，我们已经收到您的简历。",
         ),
         (
-            "孙华峰欢迎加入ThunderSoft",
+            "同学欢迎加入ThunderSoft",
             "恭喜你通过面试，现向你发出正式 Offer，请在 10 月 14 日前接受。",
         ),
         (

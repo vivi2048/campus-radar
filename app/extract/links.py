@@ -114,6 +114,15 @@ INTERVIEW_HOST_CUES = re.compile(
     re.IGNORECASE,
 )
 GENERIC_TARGET_CUES = re.compile(r"点击|进入|前往|打开|链接|入口|click|start|enter", re.IGNORECASE)
+LABELED_LINK_CUE = re.compile(
+    r"(?:测评|面试|笔试|考试|测试|专属|登录|访问|会议|入会)\s*(?:链接|入口|地址|网址)",
+    re.IGNORECASE,
+)
+BAD_LABEL_CUE = re.compile(
+    r"退订|取消订阅|隐私|条款|帮助|客服|下载|unsubscribe|privacy|terms|help|support",
+    re.IGNORECASE,
+)
+PLAIN_URL_RE = re.compile(r"https?://[^\s<>\"']+", re.IGNORECASE)
 BAD_URL_EXTENSIONS = (".jpg", ".jpeg", ".png", ".gif", ".webp", ".svg", ".css", ".js", ".ico")
 REDIRECT_KEYS = ("url", "target", "u", "redirect", "redirect_url", "destination")
 
@@ -284,6 +293,34 @@ def has_interview_link(links: list[EmailLink]) -> bool:
     return any(score_interview_link(link) >= 5 for link in links)
 
 
+def select_labeled_link(text: str) -> SelectedLink | None:
+    """Fall back to a URL that is explicitly labeled as the test/interview link.
+
+    Short-link domains such as bsurl.cn carry no platform or path cue, so a
+    plain "测评链接：https://..." line would otherwise be ignored.
+    """
+    if not text:
+        return None
+    for match in PLAIN_URL_RE.finditer(text):
+        url = normalize_url(
+            match.group(0).rstrip(".,;:!?，。；：！？、）)】]}>》」』\"'")
+        )
+        if not url or is_tracking_link(url):
+            continue
+        before = text[max(0, match.start() - 24) : match.start()]
+        if BAD_LABEL_CUE.search(before) or not LABELED_LINK_CUE.search(before):
+            continue
+        lower = url.lower()
+        if any(
+            token in lower
+            for token in ("career", "jobs", "apply", "application", "privacy", "unsubscribe")
+        ):
+            continue
+        rule = _platform_rule(url)
+        return SelectedLink(url=url, platform=rule.name if rule else None, score=1)
+    return None
+
+
 def detect_platform(
     text: str,
     links: list[EmailLink],
@@ -317,6 +354,7 @@ def detect_platform(
             (r"\bWebex\b", "Webex"),
             (r"牛客(?:面试|网)?", "牛客网"),
             (r"\bHireVue\b", "HireVue"),
+            (r"微信小程序", "微信小程序"),
         )
         for pattern, name in interview_checks:
             if re.search(pattern, body, re.IGNORECASE):

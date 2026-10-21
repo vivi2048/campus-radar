@@ -84,7 +84,7 @@ CN_TIME_POINT_RE = re.compile(
 
 DURATION_PATTERNS: tuple[re.Pattern[str], ...] = (
     re.compile(
-        r"(?:考试|笔试|测评|作答|答题|面试|面谈)(?:时长|时间)(?:为|是)?\s*[:：]?\s*"
+        r"(?:考试|笔试|测评|作答|答题|面试|面谈)(?:时长|时间)(?:约|大约|大概)?(?:为|是)?\s*[:：]?\s*"
         r"(?P<n>\d{1,3}(?:\.\d+)?)\s*(?P<unit>分钟|min(?:ute)?s?|小时|h(?:our)?s?)",
         re.IGNORECASE,
     ),
@@ -537,7 +537,6 @@ def extract_timings(
     if subject_len < 0:
         subject_len = len(prepared)
     local_received = to_local(received_at)
-    foreign_relative = kind == "interview" and _has_foreign_relative_deadline(prepared)
     dates = _find_date_mentions(prepared)
     times = _find_time_mentions(prepared)
 
@@ -646,11 +645,7 @@ def extract_timings(
             ).isoformat(timespec="minutes")
         deadline_time_known = chosen_deadline.time_known
     else:
-        relative = _extract_relative_deadline(
-            prepared,
-            local_received,
-            skip_foreign=kind == "interview",
-        )
+        relative = _extract_relative_deadline(prepared, local_received)
         if relative:
             deadline, note, has_action = relative
             deadline_time_known = True
@@ -683,11 +678,7 @@ def extract_timings(
             "邮件给出的是测评/笔试有效窗口，开始时间取窗口开始时间；"
             f"可在截止前自主开始{limit}。"
         )
-    if (
-        not exam_start
-        and COMPLETION_CUE_RE.search(prepared)
-        and not (foreign_relative and not deadline)
-    ):
+    if not exam_start and COMPLETION_CUE_RE.search(prepared):
         deadline_dt = datetime.fromisoformat(deadline) if deadline else None
         inferred = _infer_estimated_start(local_received, deadline_dt, duration, kind)
         if inferred:
@@ -775,15 +766,11 @@ def _extract_duration(text: str) -> int | None:
 
 
 def _extract_relative_deadline(
-    text: str, received_at: datetime, *, skip_foreign: bool = False
+    text: str, received_at: datetime
 ) -> tuple[str, str, bool] | None:
     for pattern in RELATIVE_DEADLINE_PATTERNS:
         for match in pattern.finditer(text):
             prefix = text[max(0, match.start() - 60) : match.start()]
-            if skip_foreign and FOREIGN_DEADLINE_RE.search(prefix):
-                # In an interview invite, "另一封测评邮件需在 48 小时内完成"
-                # belongs to that assessment, not to this interview.
-                continue
             amount = int(match.group("n"))
             unit = match.group("unit").lower()
             if unit.startswith("分钟") or unit.startswith("minute"):
@@ -807,14 +794,9 @@ def _extract_relative_deadline(
                 note = f"邮件要求收到后 {amount} {unit_label}内完成，截止时间按邮件收件时间推算。"
             else:
                 note = f"邮件给出的有效期截至收到后 {amount} {unit_label}内，截止时间按收件时间推算。"
+            if FOREIGN_DEADLINE_RE.search(prefix):
+                # The same sentence can mention another invitation email; keep
+                # the deadline (better an early reminder than none) but flag it.
+                note += "该时限在邮件中与其他安排一并提及，请核对是否适用于本场安排。"
             return deadline.isoformat(timespec="minutes"), note, has_action
     return None
-
-
-def _has_foreign_relative_deadline(text: str) -> bool:
-    for pattern in RELATIVE_DEADLINE_PATTERNS:
-        for match in pattern.finditer(text):
-            prefix = text[max(0, match.start() - 60) : match.start()]
-            if FOREIGN_DEADLINE_RE.search(prefix):
-                return True
-    return False

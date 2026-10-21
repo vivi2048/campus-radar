@@ -133,7 +133,8 @@ actionable 只有在 category 为 exam_invite、interview_invite、reschedule、
 - start/end：收件人实际参加笔试或面试的时间，不是申请截止、报名截止、链接有效期，也不是“尽快完成”。
 - deadline：要求确认参加、预约场次、提交材料或完成测试的截止时间；只有日期没有具体时间时 deadline_time_known=false。
 - 如果邮件只给出测评/笔试有效窗口（例如“10月14日 09:01 生效，10月21日 09:01 截止，请在60分钟内完成”），start 取窗口生效时间，deadline 取截止时间，duration_minutes 取单次作答时长，start_is_window=true，并在 notes 说明可在窗口内自主开始；不要把截止时间当成 start，也不要用 duration_minutes 推算 end。
-- 如果邮件要求“收到笔试题/通知后的 N 个自然日内完成”，start 取邮件收件时间，deadline 为收件时间加 N 天，start_is_window=true，并在 notes 说明；不要留空 start。
+- 如果邮件要求“收到笔试题/通知/邮件后的 N 小时内或 N 个自然日内完成”，start 取邮件收件时间，deadline 为收件时间加 N 小时/天，start_is_window=true，并在 notes 说明；不要留空 start。
+- 如果邮件写“本环节包含 AI 面试和在线测评两项内容……于收到邮件的 N 小时内完成作答”，即使同一句提到另一封邀请邮件，也要按收件时间推算 deadline；没有独立 start 时，start 取收件时间并设置 start_is_window=true，在 notes 注明该时限与另一封邮件一并提及、请核对。
 - 系统升级、维护、暂时锁定、无法作答、“请避开此时间段”等是禁止作答的维护窗口，不是考试或面试时间；不要把这类时段填进 start/end/deadline。
 - 只依据主题、正文和链接；不要从签名、页脚、引用历史、广告、职位推荐或其他邮件内容推断。
 - 同一封邮件有多个安排时，选择最明确、时间最接近当前时间的一场，并在 notes 说明还有其他安排。

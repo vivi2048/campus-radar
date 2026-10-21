@@ -65,6 +65,7 @@ const ICONS = {
   inbox: '<path d="M4 5h16l1 9H3l1-9Z"/><path d="M3 14v5h18v-5"/><path d="M8 14h8"/>',
   chart: '<path d="M4 19V5M4 19h16"/><path d="m7 15 4-4 3 2 5-6"/>',
   edit: '<path d="M13.5 6.5 17.5 10.5M5 19l3.8-.8L19.6 7.4a2.1 2.1 0 0 0-3-3L5.8 15.2 5 19Z"/>',
+  sliders: '<path d="M4 7h8M16 7h4M4 17h4M12 17h8"/><circle cx="14" cy="7" r="2"/><circle cx="10" cy="17" r="2"/>',
   dot: '<circle cx="12" cy="12" r="4" fill="currentColor" stroke="none"/>',
   form: '<rect x="4" y="3" width="16" height="18" rx="3"/><path d="M8 8h8M8 12h8M8 16h5"/>',
   video: '<rect x="3" y="6" width="12" height="12" rx="2.5"/><path d="m15 10 6-3v10l-6-3"/>',
@@ -112,6 +113,7 @@ const el = {
   sidebar: document.getElementById("sidebar"),
   sidebarBackdrop: document.getElementById("sidebar-backdrop"),
   confirm: document.getElementById("confirm-dialog"),
+  accountSettings: document.getElementById("account-settings-dialog"),
 };
 
 // ---------------------------------------------------------------------------
@@ -713,7 +715,7 @@ function renderDemoBanner() {
   return `<div class="demo-banner">
     <span class="demo-tag">DEMO</span>
     <p>你正在查看示例数据，它们不会连接真实邮箱。</p>
-    <button class="text-button" type="button" data-action="clear-demo">清除示例</button>
+    <button class="text-button" type="button" data-action="clear-demo">清空示例</button>
   </div>`;
 }
 
@@ -780,8 +782,8 @@ function renderFocusCard(event, noEvents) {
       : "目前没有待参加的笔试或面试。已完成或已结束的记录，都收在日程里。";
     const actions = noEvents
       ? `<div class="focus-actions">
+          <button class="button button-ghost" type="button" data-action="load-demo">查看示例</button>
           <button class="button button-primary" type="button" data-action="focus-account-form">连接邮箱</button>
-          <button class="button button-ghost" type="button" data-action="load-demo">看看示例</button>
         </div>`
       : "";
     return `<article class="focus-card">
@@ -1364,9 +1366,9 @@ function renderAISettingsPanel() {
       </div>
       <div class="form-error" data-form-error hidden></div>
       <div class="ai-settings-actions">
-        <button class="button button-primary button-small" type="submit">保存设置</button>
-        <button class="button button-ghost button-small" type="button" data-action="test-ai" title="先保存设置，再用已保存的配置测试连接">测试连接</button>
-        ${hasKey ? `<button class="button button-ghost button-small is-danger" type="button" data-action="clear-ai-key">删除连接</button>` : ""}
+        ${hasKey ? `<button class="button button-ghost button-small is-danger" type="button" data-action="clear-ai-key">移除连接</button>` : ""}
+        <button class="button button-ghost button-small" type="button" data-action="test-ai" title="先保存，再用已保存的配置测试连接">测试连接</button>
+        <button class="button button-primary button-small" type="submit">保存</button>
       </div>
     </form>
   </section>`;
@@ -1383,18 +1385,22 @@ function renderAccountCard(account) {
     : rawLabel;
   const showProviderTag = providerLabel && !label.toLowerCase().includes(providerLabel.toLowerCase());
   return `<article class="account-card${account.last_sync_status === "error" ? " is-error" : ""}" data-account-card="${account.id}">
-    <div class="account-identity">
-      <div class="eyebrow">CONNECTED MAILBOX</div>
-      <div class="account-label">${escapeHtml(label)}${showProviderTag ? `<span class="account-tag">${escapeHtml(providerLabel)}</span>` : ""}</div>
-      <div class="account-email">${escapeHtml(account.email)}${account.folder && account.folder !== "INBOX" ? ` · ${escapeHtml(account.folder)}` : ""}</div>
+    <div class="account-top">
+      <div class="account-identity">
+        <div class="eyebrow">CONNECTED MAILBOX</div>
+        <div class="account-label">${escapeHtml(label)}${showProviderTag ? `<span class="account-tag">${escapeHtml(providerLabel)}</span>` : ""}</div>
+        <div class="account-email">${escapeHtml(account.email)}${account.folder && account.folder !== "INBOX" ? ` · ${escapeHtml(account.folder)}` : ""}</div>
+      </div>
+      <button class="icon-button account-settings-button" type="button" data-action="open-account-settings" data-id="${account.id}" title="同步设置" aria-label="同步设置" ${isSyncing ? "disabled" : ""}>${icon("sliders", 14)}</button>
     </div>
     <div class="account-status ${status.className}">
       <span>${escapeHtml(status.text)}${status.detail ? ` · ${escapeHtml(status.detail)}` : ""}</span>
     </div>
     ${account.last_sync_status === "error" && account.last_sync_error ? `<div class="account-error">${escapeHtml(account.last_sync_error)}</div>` : ""}
     <div class="account-toolbar">
-      <button class="button button-ghost button-small" type="button" data-action="sync-account" data-id="${account.id}" ${isSyncing ? "disabled" : ""}>${isSyncing ? "同步中…" : account.last_sync_status === "error" ? "重试同步" : "立即同步"}</button>
       <button class="button button-ghost button-small is-danger" type="button" data-action="delete-account" data-id="${account.id}">移除邮箱</button>
+      <button class="button button-ghost button-small" type="button" data-action="clear-account-mails" data-id="${account.id}" ${isSyncing ? "disabled" : ""}>清空邮件</button>
+      <button class="button button-primary button-small" type="button" data-action="sync-account" data-id="${account.id}" ${isSyncing ? "disabled" : ""}>${isSyncing ? "同步中…" : account.last_sync_status === "error" ? "重试同步" : "同步"}</button>
     </div>
   </article>`;
 }
@@ -1425,7 +1431,7 @@ function renderAccountForm() {
         <input class="input" id="account-label" name="label" type="text" maxlength="80">
       </div>
       <div class="form-field">
-        <label class="field-label" for="account-sync-days">首次同步范围</label>
+        <label class="field-label" for="account-sync-days">同步范围</label>
         <select class="select" id="account-sync-days" name="sync_days">
           <option value="7">最近 7 天</option>
           <option value="14">最近 14 天</option>
@@ -1839,10 +1845,10 @@ function renderDrawer() {
     </div>
     <div class="drawer-footer">
       <div class="drawer-footer-actions">
-        ${mode === "edit" ? `<button class="button button-ghost button-small is-danger" type="button" data-action="delete-event" data-id="${event.id}">删除</button>
+        ${mode === "edit" ? `<button class="button button-ghost button-small is-danger" type="button" data-action="delete-event" data-id="${event.id}">删除记录</button>
         ${entryUrl ? `<a class="button button-ghost button-small" href="${escapeHtml(entryUrl)}" target="_blank" rel="noopener noreferrer">${eventLinkLabel(event)}</a>` : ""}` : ""}
         <button class="button button-ghost button-small" type="button" data-action="${mode === "edit" ? "cancel-edit" : "close-drawer"}">取消</button>
-        <button class="button button-ghost button-small" type="submit" form="event-form" data-submit-event>${mode === "create" ? `添加${KIND_LABELS[kind]}` : "保存修改"}</button>
+        <button class="button button-primary button-small" type="submit" form="event-form" data-submit-event>${mode === "create" ? `添加${KIND_LABELS[kind]}` : "保存"}</button>
       </div>
     </div>`;
   applyEventKindUI(kind);
@@ -1887,15 +1893,17 @@ function showToast(message, type = "success") {
   }, type === "error" ? 6_200 : 4_200);
 }
 
-function showConfirm({
+function openConfirm({
   title,
   message,
   confirmLabel = "确认",
   danger = true,
   iconName = "alert",
+  optionLabel = "",
+  optionChecked = false,
 }) {
   const dialog = el.confirm;
-  if (dialog.open) return Promise.resolve(false);
+  if (dialog.open) return Promise.resolve({ confirmed: false, optionChecked: false });
   dialog.querySelector("#confirm-title").textContent = title;
   dialog.querySelector("#confirm-message").textContent = message;
   const mark = dialog.querySelector("#confirm-mark");
@@ -1904,12 +1912,34 @@ function showConfirm({
   const confirmButton = dialog.querySelector("#confirm-button");
   confirmButton.textContent = confirmLabel;
   confirmButton.className = `button ${danger ? "button-danger" : "button-primary"}`;
+  const optionWrap = dialog.querySelector("[data-confirm-option]");
+  const optionInput = dialog.querySelector("#confirm-option");
+  const optionText = dialog.querySelector("#confirm-option-label");
+  const hasOption = Boolean(optionLabel);
+  if (optionWrap) optionWrap.hidden = !hasOption;
+  if (optionInput) {
+    optionInput.checked = hasOption && Boolean(optionChecked);
+    optionInput.disabled = !hasOption;
+  }
+  if (optionText) optionText.textContent = optionLabel || "";
   dialog.returnValue = "cancel";
   return new Promise((resolve) => {
-    const onClose = () => resolve(dialog.returnValue === "confirm");
+    const onClose = () =>
+      resolve({
+        confirmed: dialog.returnValue === "confirm",
+        optionChecked: hasOption && Boolean(optionInput?.checked),
+      });
     dialog.addEventListener("close", onClose, { once: true });
     dialog.showModal();
   });
+}
+
+function showConfirm(options) {
+  return openConfirm(options).then((result) => result.confirmed);
+}
+
+function showConfirmWithOption(options) {
+  return openConfirm(options);
 }
 
 function setButtonBusy(button, busy, busyLabel = "处理中…") {
@@ -2072,7 +2102,7 @@ async function deleteEventPermanently(eventId) {
   const event = state.drawer?.event || state.events.find((item) => item.id === Number(eventId));
   if (!event) return;
   const confirmed = await showConfirm({
-    title: "删除这条日程记录？",
+    title: "删除记录？",
     message: `${event.company || "-"} · ${[event.role, event.interview_round].filter(Boolean).join(" · ") || "-"}\n删除后无法恢复，但不会影响原始邮件。`,
     confirmLabel: "删除记录",
     danger: true,
@@ -2266,9 +2296,9 @@ async function testAISettings() {
 
 async function clearAIKeyWithConfirm() {
   const confirmed = await showConfirm({
-    title: "删除连接？",
-    message: "删除后将恢复为完全本地规则识别，不再向大模型接口发送邮件内容。",
-    confirmLabel: "删除连接",
+    title: "移除连接？",
+    message: "移除后将恢复为完全本地规则识别，不再向大模型接口发送邮件内容。",
+    confirmLabel: "移除连接",
     danger: true,
     iconName: "key",
   });
@@ -2286,7 +2316,7 @@ async function clearAIKeyWithConfirm() {
     });
     state.aiSettings = saved;
     renderCurrentView();
-    showToast("连接已删除，当前使用本地规则", "info");
+    showToast("连接已移除，当前使用本地规则", "info");
   } catch (error) {
     showToast(error.message, "error");
   }
@@ -2364,12 +2394,111 @@ async function submitAccountForm(form) {
   }
 }
 
+function accountSyncDays(account) {
+  const raw = Number(account.sync_days);
+  return Number.isFinite(raw) && raw > 0 ? raw : 30;
+}
+
+function accountSyncRangeOptions(account) {
+  const current = accountSyncDays(account);
+  return [...new Set([7, 14, 30, 60, 90, current])].sort((a, b) => a - b);
+}
+
+function openAccountSettings(accountId) {
+  const account = state.accounts.find((item) => item.id === Number(accountId));
+  const dialog = el.accountSettings;
+  if (!account || !dialog || dialog.open) return;
+  const syncDays = accountSyncDays(account);
+  const select = dialog.querySelector("#account-settings-sync-days");
+  if (select) {
+    select.innerHTML = accountSyncRangeOptions(account)
+      .map((days) => `<option value="${days}">最近 ${days} 天</option>`)
+      .join("");
+    select.value = String(syncDays);
+  }
+  const errorBox = dialog.querySelector("[data-form-error]");
+  if (errorBox) {
+    errorBox.hidden = true;
+    errorBox.textContent = "";
+  }
+  const submitButton = dialog.querySelector("button[type='submit']");
+  if (submitButton) setButtonBusy(submitButton, false);
+  dialog.dataset.accountId = String(account.id);
+  dialog.showModal();
+}
+
+function closeAccountSettings() {
+  if (el.accountSettings?.open) el.accountSettings.close("cancel");
+}
+
+async function submitAccountSettings(form) {
+  const dialog = form.closest("dialog");
+  const accountId = Number(dialog?.dataset.accountId);
+  const account = state.accounts.find((item) => item.id === accountId);
+  const select = form.querySelector("#account-settings-sync-days");
+  if (!account || !(select instanceof HTMLSelectElement)) return;
+  const next = Number(select.value);
+  if (!Number.isFinite(next)) {
+    setFormError(form, "同步范围格式不正确。");
+    return;
+  }
+  const button = form.querySelector("button[type='submit']");
+  setFormError(form, "");
+  setButtonBusy(button, true, "保存中…");
+  try {
+    const updated = await api(`/api/accounts/${account.id}`, {
+      method: "PATCH",
+      body: { sync_days: next },
+    });
+    const index = state.accounts.findIndex((item) => item.id === account.id);
+    if (index >= 0) {
+      state.accounts[index] = updated || { ...account, sync_days: next };
+    }
+    const applied = Number(updated?.sync_days || next);
+    setButtonBusy(button, false);
+    closeAccountSettings();
+    showToast(`同步范围已更新为最近 ${applied} 天`, "info");
+  } catch (error) {
+    setFormError(form, error.message);
+    setButtonBusy(button, false);
+  }
+}
+
+async function clearAccountMailsWithConfirm(accountId) {
+  const account = state.accounts.find((item) => item.id === Number(accountId));
+  if (!account) return;
+  const related = state.events.filter((event) => event.account_id === account.id).length;
+  const { confirmed, optionChecked: resetCursor } = await showConfirmWithOption({
+    title: "清空邮件？",
+    message: `将删除由 ${account.email} 同步的${related ? ` ${related} 条日程记录及` : ""}全部识别记录。\n邮箱连接会保留，原始邮件不会被删除；不勾选下方选项时保留同步进度。`,
+    confirmLabel: "清空邮件",
+    danger: true,
+    iconName: "trash",
+    optionLabel: "同时重置同步游标，下次同步会重新导入并识别旧邮件",
+  });
+  if (!confirmed) return;
+  try {
+    const suffix = resetCursor ? "?reset_cursor=true" : "";
+    const result = await api(`/api/accounts/${account.id}/messages${suffix}`, { method: "DELETE" });
+    if (state.drawer?.event?.account_id === account.id) closeDrawer();
+    await refreshData();
+    if (resetCursor) {
+      showToast("已清空邮件并重置同步游标，下次同步会重新导入旧邮件", "info");
+    } else {
+      const count = Number(result?.events || 0);
+      showToast(count ? `已清空 ${count} 条日程记录` : "已清空该邮箱的邮件记录", "info");
+    }
+  } catch (error) {
+    showToast(error.message, "error");
+  }
+}
+
 async function deleteAccountWithConfirm(accountId) {
   const account = state.accounts.find((item) => item.id === Number(accountId));
   if (!account) return;
   const related = state.events.filter((event) => event.account_id === account.id).length;
   const confirmed = await showConfirm({
-    title: "移除这个邮箱？",
+    title: "移除邮箱？",
     message: `将断开 ${account.email} 的连接${related ? `，并删除由它同步的 ${related} 条日程记录` : ""}。\n此操作无法撤销，但不会删除邮箱里的原始邮件。`,
     confirmLabel: "移除邮箱",
     danger: true,
@@ -2412,9 +2541,9 @@ async function loadDemoData() {
 
 async function clearDemoData() {
   const confirmed = await showConfirm({
-    title: "清除示例数据？",
-    message: "只会删除标记为示例的记录，不会影响真实邮箱和手动添加的内容。",
-    confirmLabel: "清除示例",
+    title: "清空示例数据？",
+    message: "只会清空标记为示例的记录，不会影响真实邮箱和手动添加的内容。",
+    confirmLabel: "清空示例",
     danger: false,
     iconName: "sparkle",
   });
@@ -2422,7 +2551,7 @@ async function clearDemoData() {
   try {
     await api("/api/demo", { method: "DELETE" });
     await refreshData();
-    showToast("示例数据已清除", "success");
+    showToast("示例数据已清空", "success");
   } catch (error) {
     showToast(error.message, "error");
   }
@@ -2541,6 +2670,15 @@ function handleDocumentClick(event) {
     case "focus-account-form":
       focusAccountForm();
       break;
+    case "open-account-settings":
+      if (id) openAccountSettings(Number(id));
+      break;
+    case "close-account-settings":
+      closeAccountSettings();
+      break;
+    case "clear-account-mails":
+      if (id) clearAccountMailsWithConfirm(Number(id));
+      break;
     case "delete-account":
       if (id) deleteAccountWithConfirm(Number(id));
       break;
@@ -2585,6 +2723,9 @@ function handleDocumentSubmit(event) {
   } else if (form.id === "ai-settings-form") {
     event.preventDefault();
     submitAISettingsForm(form);
+  } else if (form.id === "account-settings-form") {
+    event.preventDefault();
+    submitAccountSettings(form);
   }
 }
 
@@ -2606,7 +2747,7 @@ function handleDocumentInput(event) {
     updateProviderUI(detectProviderId(target.value));
   }
   const form = target.closest("form");
-  if (form && (form.id === "account-form" || form.id === "event-form" || form.id === "ai-settings-form")) {
+  if (form && (form.id === "account-form" || form.id === "event-form" || form.id === "ai-settings-form" || form.id === "account-settings-form")) {
     setFormError(form, "");
   }
 }
@@ -2622,6 +2763,7 @@ function handleDocumentChange(event) {
 function handleDocumentKeydown(event) {
   if (event.key !== "Escape") return;
   if (el.confirm.open) return;
+  if (el.accountSettings?.open) return;
   if (state.drawer) {
     closeDrawer();
     return;
@@ -2674,6 +2816,9 @@ function bindStaticEvents() {
   document.getElementById("sidebar-close")?.addEventListener("click", closeSidebar);
   el.confirm.addEventListener("click", (event) => {
     if (event.target === el.confirm) el.confirm.close("cancel");
+  });
+  el.accountSettings?.addEventListener("click", (event) => {
+    if (event.target === el.accountSettings) el.accountSettings.close("cancel");
   });
 }
 
