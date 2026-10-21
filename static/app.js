@@ -258,7 +258,7 @@ function deadlineText(event, options = {}) {
   if (!info) return "";
   let text = `${info.month}月${info.day}日`;
   if (options.includeWeekday) text += ` ${info.weekdayName}`;
-  if (event.deadline_time_known) text += ` ${info.time}`;
+  if (event.deadline_time_known) text += ` · ${info.time}`;
   return text;
 }
 
@@ -807,7 +807,7 @@ function renderFocusCard(event, noEvents) {
       ? (isInterviewEvent(event) ? "面试时长" : "作答时长")
       : (isInterviewEvent(event) ? "面试形式" : "考试形式"));
   const secondMetaValue = event.deadline
-    ? (deadlineText(event, { includeWeekday: false }) || "-")
+    ? (deadlineText(event, { includeWeekday: true }) || "-")
     : (event.duration_minutes ? `${event.duration_minutes} 分钟` : (modeLabel(event.mode) || "-"));
 
   return `<article class="focus-card">
